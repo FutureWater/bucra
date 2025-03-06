@@ -1,123 +1,176 @@
 import os
-import pandas as pd
-import geopandas as gpd
-import rasterio
+import math
 import numpy as np
-from rasterio.enums import Resampling
-from datetime import datetime
-import glob
+import rasterio
+from rasterio.warp import reproject, Resampling, calculate_default_transform
+from rasterio.mask import mask
+import geopandas as gpd
+from scipy.ndimage import sobel
 
-# Clean working directory (remove variables if needed)
-# Not required in Python as we don't have a global environment like R's workspace
 
-# Define directories
-data_drop = "C:/Users/Lisa/Dropbox (FutureWater)/FW_VH_RK/01_Data/"
-results_drop = "C:/Users/Lisa/Dropbox (FutureWater)/FW_VH_RK/04_Results/"
-provinces = "C:/Users/Lisa/Dropbox (FutureWater)/FW_VH_RK/02_GIS/Shapefiles/AGO_adm1.shp"
-DEM = "C:/Users/Lisa/Dropbox (FutureWater)/FW_VH_RK/01_Data/Elevation/SRTM_30m_Angola_mask.tif"
-HHS_data_dir = "H:/01_Data/__TO_DROPBOX__/Top_Subsoil/"
-cropping_calender = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/03_R_Scripts/Cropping_calendar.csv"
-cc_a = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/03_R_Scripts/Cropping_calendar_A.csv"
-cc_b = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/03_R_Scripts/Cropping_calendar_B.csv"
-parameters = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/03_R_Scripts/Parameters.csv"
-communes = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/Shapefiles/AGO_adm3.shp"
-Scripts_dir = "C:/Users/Lisa/Documents/Projects/2019019_MavoDiami/03_R_Scripts"
+##############################################################################################
+################################### START OF DATA INPUT ######################################
+##############################################################################################
+# Define directories and file paths
+DATA_DIR = "your_data_directory"
+RESULTS_DIR = "your_results_directory"
+PROVINCE_NAME = "your_province_name"
+RES = 250  # Set resolution in meters
+LOCAL_PROJ = "EPSG:32733"
 
-# Set resolution and projection of final rasters
-res = 250  # meter
-Local_proj = "EPSG:32733"
+# Function to ensure directory exists
 
-# Temperature and Rainfall input parameters
-T_vars = ["tavg", "tmin", "tmax"]
-T_lapse_rate = -0.0065
-T_perc = [0.75, 0.95]
-T_perc_names = ["Warmer", "Much_Warmer"]
-P_perc = [0.25, 0.05]
-P_perc_names = ["Drier", "Much_Drier"]
 
-# Read input files
-DEM_r = rasterio.open(DEM)
-provinces_shp = gpd.read_file(provinces)
-provinces_names = provinces_shp['NAME_1'].unique()
-cropping_cal = pd.read_csv(cropping_calender)
-cropping_cal_a = pd.read_csv(cc_a)
-cropping_cal_b = pd.read_csv(cc_b)
-params = pd.read_csv(parameters)
+def ensure_dir(directory):
+    os.makedirs(directory, exist_ok=True)
 
-# Create unique combinations for land suitability
-unique_combis = [f"Land_Suitability_{x}_{y}" for x in ["Average"] + T_perc_names for y in ["Average"] + P_perc_names]
-unique_combis.append("Land_Suitability_Average_Average")
 
-# Read communes shapefile
-communes_shp = gpd.read_file(communes)
-communes_shp_proj = communes_shp.to_crs(Local_proj)
+# Create output directory for DEM
+NEW_DIR = os.path.join(RESULTS_DIR, PROVINCE_NAME, "DEM")
+ensure_dir(NEW_DIR)
 
-communes_df = communes_shp[['NAME_1', 'NAME_2', 'NAME_3']].rename(columns={'NAME_1': 'Province', 'NAME_2': 'Municipality', 'NAME_3': 'Commune'})
-communes_df['Province'] = communes_df['Province'].str.replace(" ", "_")
+# Create output directory for slope
+INDIR_ELEV = os.path.join(DATA_DIR, "_LS_Results", "Elevation")
+ensure_dir(INDIR_ELEV)
 
-# Prepare forecast dataframe
-final_forecast_df = pd.DataFrame({
-    "Province": [None] * (len(communes_df) * len(cropping_cal)),
-    "Commune": np.repeat(communes_df['Commune'], len(cropping_cal)),
-    "Crop": [f"{row['Crop']}_{month[:3]}_{month[4:]}" for _, row in cropping_cal.iterrows() for month in zip(cropping_cal['Start_growing_season'], cropping_cal['End_growing_season'])],
-    "Planting_Suitability_M1": [None] * (len(communes_df) * len(cropping_cal)),
-    "Planting_Suitability_M2": [None] * (len(communes_df) * len(cropping_cal)),
-    "Planting_Suitability_M3": [None] * (len(communes_df) * len(cropping_cal)),
-    "Crop_Start_Month": [None] * (len(communes_df) * len(cropping_cal)),
-    "Average_Average": [None] * (len(communes_df) * len(cropping_cal)),
-    "Threshold": [None] * (len(communes_df) * len(cropping_cal)),
-})
+# Load original DEM (assuming it's already available)
+DEM_PATH = os.path.join(DATA_DIR, "DEM.tif")  # Adjust this path as needed
+print(f"Loading DEM: {DEM_PATH}")
 
-for i, row in final_forecast_df.iterrows():
-    final_forecast_df.loc[i, 'Province'] = communes_df['Province'][communes_df['Commune'] == row['Commune']].values[0]
+# Load province shapefile
+PROVINCE_SHP_PATH = os.path.join(
+    DATA_DIR, f"{PROVINCE_NAME}.shp")  # Adjust as needed
+PROVINCE_SHP = gpd.read_file(PROVINCE_SHP_PATH)
 
-# Add columns to communes_df
-for _, row in cropping_cal.iterrows():
-    crop = row['Crop']
-    start_month = row['Start_growing_season']
-    end_month = row['End_growing_season']
-    name_col = f"{crop}_{month.abb[start_month-1]}_{month.abb[end_month-1]}"
-    communes_df[name_col] = np.nan
+##############################################################################################
+############################# CALCULATE ELEVATION AND SLOPE ##################################
+##############################################################################################
+# Step 1: Crop and mask DEM with province shapefile
+print(f"Crop DEM: {PROVINCE_NAME}")
+with rasterio.open(DEM_PATH) as src:
+    # Project shapefile to match DEM CRS if needed
+    if PROVINCE_SHP.crs != src.crs:
+        PROVINCE_SHP = PROVINCE_SHP.to_crs(src.crs)
 
-# Loop through and save files for each combination
-for comb in unique_combis:
-    communes_df.to_csv(f"{comb}_Communes.csv")
+    # Crop DEM to shapefile extent
+    out_image, out_transform = mask(src, PROVINCE_SHP.geometry, crop=True)
 
-# Set options for raster processing
-rasterio.env.default_options.update({
-    'overwrite': True,
-    'max_memory': 1e+10,
-    'chunksize': 0.1e+10,
-    'tmpdir': temp_dir
-})
+    # Copy metadata
+    out_meta = src.meta.copy()
+    out_meta.update({
+        "driver": "GTiff",
+        "height": out_image.shape[1],
+        "width": out_image.shape[2],
+        "transform": out_transform
+    })
 
-start_time = datetime.now()
+# Step 2: Prepare target raster with desired resolution and projection
+print(f"Setting up target raster grid: {PROVINCE_NAME}")
+# Project province shapefile to local projection for determining bounds
+PROVINCE_SHP_PROJ = PROVINCE_SHP.to_crs(LOCAL_PROJ)
+bounds = PROVINCE_SHP_PROJ.total_bounds  # [xmin, ymin, xmax, ymax]
 
-switch = 2  # HARDCODED
-n = 15 if switch == 2 else 10
+# Calculate dimensions of target raster
+width = int((bounds[2] - bounds[0]) / RES)
+height = int((bounds[3] - bounds[1]) / RES)
 
-# Example: Running seasonal forecast (Script 8) if switch is 2
-if n == 15:
-    # Implement your Seasonal Forecast function here
-    pass
+# Create transform for target raster
+target_transform = rasterio.transform.from_bounds(
+    bounds[0], bounds[1], bounds[2], bounds[3], width, height
+)
 
-# Run through scripts for each province
-list_scripts = [f for f in glob.glob(os.path.join(Scripts_dir, "*.R")) if "000_Run_All.R" not in f]
+# Step 3: Reproject using bilinear method
+print(f"Bilinear projectRaster DEM: {PROVINCE_NAME}")
+bilinear_dem = np.zeros((height, width), dtype=np.float32)
 
-for script in list_scripts[n:]:
-    for name in provinces_names:
-        # Processing for each province
-        province_shp = provinces_shp[provinces_shp['NAME_1'] == name]
-        province_name = name.replace(" ", "_")
-        indir = os.path.join(results_dir, province_name)
-        
-        print(f"Province: {province_name} & script: {os.path.basename(script)}")
-        # Execute the script (you'll need to implement a way to translate R script into Python functions)
-        
-        # Clean up temporary files after processing
-        temp_files = glob.glob(os.path.join(temp_dir, "*.grd")) + glob.glob(os.path.join(temp_dir, "*.gri"))
-        for file in temp_files:
-            os.remove(file)
+with rasterio.open(DEM_PATH) as src:
+    reproject(
+        source=src.read(1),
+        destination=bilinear_dem,
+        src_transform=src.transform,
+        src_crs=src.crs,
+        dst_transform=target_transform,
+        dst_crs=LOCAL_PROJ,
+        resampling=Resampling.bilinear
+    )
 
-end_time = datetime.now()
-print(f"Total time taken: {end_time - start_time}")
+# Step 4: Reproject using nearest neighbor method
+print(f"NGb projectRaster DEM: {PROVINCE_NAME}")
+ngb_dem = np.zeros((height, width), dtype=np.float32)
+
+with rasterio.open(DEM_PATH) as src:
+    reproject(
+        source=src.read(1),
+        destination=ngb_dem,
+        src_transform=src.transform,
+        src_crs=src.crs,
+        dst_transform=target_transform,
+        dst_crs=LOCAL_PROJ,
+        resampling=Resampling.nearest
+    )
+
+# Step 5: Calculate difference between bilinear and nearest neighbor
+diff_dem = bilinear_dem - ngb_dem
+
+# Step 6: Write results to files
+print(f"Write rasters DEM: {PROVINCE_NAME}")
+# Metadata for output files
+out_meta = {
+    "driver": "GTiff",
+    "height": height,
+    "width": width,
+    "count": 1,
+    "dtype": bilinear_dem.dtype,
+    "crs": LOCAL_PROJ,
+    "transform": target_transform
+}
+
+# Write bilinear resampled DEM
+bilinear_path = os.path.join(NEW_DIR, f"DEM_{PROVINCE_NAME}_{RES}m.tif")
+with rasterio.open(bilinear_path, "w", **out_meta) as dst:
+    dst.write(bilinear_dem, 1)
+
+# Write difference raster
+diff_path = os.path.join(NEW_DIR, f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
+with rasterio.open(diff_path, "w", **out_meta) as dst:
+    dst.write(diff_dem, 1)
+
+# Step 7: Calculate and save slope
+print(f"Calculate slope DEM: {PROVINCE_NAME}")
+
+# Calculate slope using 3x3 windows (equivalent to terrain with neighbors=8)
+
+
+def calculate_slope(dem, cell_size=RES):
+    # Calculate gradients
+    dx = sobel(dem, axis=1) / (8 * cell_size)
+    dy = sobel(dem, axis=0) / (8 * cell_size)
+
+    # Calculate slope in radians and convert to percent
+    slope_radians = np.arctan(np.sqrt(dx**2 + dy**2))
+    slope_percent = np.tan(slope_radians) * 100
+
+    return slope_percent
+
+
+# Calculate slope
+slope = calculate_slope(bilinear_dem)
+
+# Save slope raster
+slope_path = os.path.join(INDIR_ELEV, f"Slope_{PROVINCE_NAME}.tif")
+with rasterio.open(slope_path, "w", **out_meta) as dst:
+    dst.write(slope.astype(rasterio.float32), 1)
+
+# Step 8: Calculate areas with slope less than threshold
+# Get slope threshold from params (you'll need to define this)
+slope_threshold = 15  # Example value, replace with your actual threshold from params
+slope_lower_limit = (slope < slope_threshold).astype(np.uint8)
+
+# Save threshold raster
+lower_slope_path = os.path.join(
+    INDIR_ELEV, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
+out_meta.update({"dtype": "uint8"})
+with rasterio.open(lower_slope_path, "w", **out_meta) as dst:
+    dst.write(slope_lower_limit, 1)
+
+print(f"Processing slope complete for {PROVINCE_NAME}")
