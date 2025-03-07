@@ -1,0 +1,9 @@
+Parameter,Abrev,Weight,Limit,Units,LS_Results_Folder
+NDVI,-,0.1,0.8,-,NDVI
+Temperature,-,0.2,-,-,Temperature
+Water,-,0.2,1,-,Water
+Ksat,-,0.1,125,mm_d,Soil_Hydraulic_Properties
+WCavail,-,0.1,140,mm_m,Soil_Hydraulic_Properties
+Potasium,k,0.1,100,mg_kg,Soil_Nutrient_Content
+Phosphorus,p,0.1,10,mg_kg,Soil_Nutrient_Content
+Slope,-,0.1,15,perc,Elevation

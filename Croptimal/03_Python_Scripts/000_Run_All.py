@@ -22,25 +22,37 @@ import shutil
 ##############################################################################################
 ################################### START OF DATA INPUT ######################################
 ##############################################################################################
+# Get current working directory.
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
 
-# Directories dropbox
-DATA_DIR = "./01_Data/"
-RESULTS_DIR = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\04_Results\\"
-TEMP_DIR = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\05_Temp"
-PROVINCES = "./02_GIS/Shapefiles/AGO_adm1.shp"
-COMMUNES = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\Shapefiles\AGO_adm3.shp"
-DEM = "./01_Data/Elevation/SRTM_30m_Angola_mask.tif"
-CROPPING_CALENDER = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\03_R_Scripts\Cropping_calendar.csv"
-CC_A = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\03_R_Scripts\Cropping_calendar_A.csv"
-CC_B = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\03_R_Scripts\Cropping_calendar_B.csv"
-PARAMETERS = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\03_R_Scripts\Parameters.csv"
-HHS_DATA_DIR = "./01_Data/__TO_DROPBOX__/Top_Subsoil/"
-SEASONAL_FORECAST_DIR = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\Seasonalforecast\\"
-SCRIPTS_DIR = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\03_R_Scripts"
-NEW_DIR = r"C:\Users\Lisa\Documents\Projects\2019019_MavoDiami\04_Results\_LS_Results\_Communes\\"
-NEW_DROP = r"C:\Users\Lisa\Dropbox (FutureWater)\FW_VH_RK\04_Results\_LS_Results\_Communes\\"
+# General Folder directories
+DATA_DIR = os.path.join(parent_wd, "01_Data")
+GIS_DIR = os.path.join(parent_wd, "O2_GIS")
+SCRIPTS_DIR = os.path.join(parent_wd, "03_R_Scripts")
+RESULTS_DIR = os.path.join(parent_wd, "04_Results")
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
-# If new crops are added, set this switch to 1 (all base data is already present like T, P, etc.)
+# Input data directories
+PROVINCES = os.path.join(GIS_DIR, "Shapefiles")
+COMMUNES = os.path.join(PROVINCES, "AGO_adm3.shp")
+DEM = os.path.join(DATA_DIR, "Elevation", "SRTM_30m_Angola_mask.tif")
+HHS_DATA_DIR = os.path.join(DATA_DIR, "__TO_DROPBOX__", "Top_Subsoil")
+CROPPING_CALENDER = os.path.join(SCRIPTS_DIR, "Cropping_calendar.csv")
+CC_A = os.path.join(SCRIPTS_DIR, "Cropping_calendar_A.csv")
+CC_B = os.path.join(SCRIPTS_DIR, "Cropping_calendar_B.csv")
+PARAMETERS = os.path.join(SCRIPTS_DIR, "Parameters.csv")
+SEASONAL_FORECAST_DIR = os.path.join(parent_wd, "Seasonalforecast")
+
+# Output directories
+NEW_DIR = os.path.join(parent_wd, "04_Results", "_LS_Results", "_Communes")
+NEW_DROP = os.path.join(parent_wd, "Dropbox (FutureWater)",
+                        "FW_VH_RK", "04_Results", "_LS_Results", "_Communes")
+
+##############################################################################################
+################################### Parameter setup ##########################################
+##############################################################################################
+# # If new crops are added, set this switch to 1 (all base data is already present like T, P, etc.)
 # Make sure to choose the right cropping_calender file or add lines to the existing one.
 SWITCH = 2  # 0: all, 1: new crops only, 2: seasonal forecast only
 
