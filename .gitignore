@@ -1,0 +1,26 @@
+# System files
+.DS_Store
+**/.DS_Store
+
+# Specific folders
+Croptimal/01_Data/
+Croptimal/02_GIS/
+
+# Specific file types (examples)
+*.csv
+*.shp
+*.tif
+*.zip
+*.nc
+*.xls
+*.xlsx
+
+# Specific files with sensitive info
+config.ini
+credentials.json
+
+# Cache and temp files
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
