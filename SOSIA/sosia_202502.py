@@ -19,7 +19,8 @@ headers_api = {
     "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg=="
 }
 # Get the HTML page with the request function. Loads all the farmer data in a dictionary.
-response_api = requests.request("GET", url_api, headers=headers_api, data=payload_api)
+response_api = requests.request(
+    "GET", url_api, headers=headers_api, data=payload_api)
 print(response_api.json())
 
 # Go over the farmer dictionary and load for each farmer all attributes...
@@ -31,8 +32,11 @@ for farmer in response_api.json():
     fieldname = farmer["name"]
     Lat = farmer["latitude"]
     Long = farmer["longitude"]
+    if Lat == None or Long == None:
+        continue
     latcoords = float(Lat)
     longcoords = float(Long)
+
     point = ee.Geometry.Point(longcoords, latcoords)
     pointstring = str(Long) + "," + str(Lat)
     drip_nr = farmer["numberOfDriplines"]
@@ -397,7 +401,8 @@ for farmer in response_api.json():
     simpleJoin = ee.Join.inner()
 
     # Inner join
-    innerJoin = ee.ImageCollection(simpleJoin.apply(total_refDate, total, joinFilter))
+    innerJoin = ee.ImageCollection(
+        simpleJoin.apply(total_refDate, total, joinFilter))
 
     def func_nlb(feature):
         return ee.Image.cat(feature.get("primary"), feature.get("secondary"))
@@ -439,7 +444,8 @@ for farmer in response_api.json():
 
     nested_list = (
         poi_reduced_imgs.reduceColumns(
-            ee.Reducer.toList(5), ["Date", "ModelRun", "Etc", "Irrvol", "Irrtime"]
+            ee.Reducer.toList(5), ["Date", "ModelRun",
+                                   "Etc", "Irrvol", "Irrtime"]
         )
         .values()
         .get(0)
@@ -457,8 +463,10 @@ for farmer in response_api.json():
     )
     df["date"] = pd.to_datetime(2024 * 1000 + df["date"], format="%Y%j")
     df["modelRun"] = df["date"].dt.strftime("%Y%m%d") + "_SAT" + stringday
-    df["dateDisplay"] = df["date"].dt.strftime("%d-%m").map(lambda x: str(x)[-5:])
-    df["date"] = pd.to_datetime(df["date"], format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
+    df["dateDisplay"] = df["date"].dt.strftime(
+        "%d-%m").map(lambda x: str(x)[-5:])
+    df["date"] = pd.to_datetime(
+        df["date"], format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
     df["field"] = farmer["id"]  # farmer['name']
     df = df[
         [
@@ -480,7 +488,8 @@ for farmer in response_api.json():
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_post = requests.post(url_post, headers=headers_post, data=data_json)
+    response_post = requests.post(
+        url_post, headers=headers_post, data=data_json)
     print(response_post.json())
 
     # ------------------------------------------------------------------------------------------------------------------------
@@ -497,7 +506,8 @@ for farmer in response_api.json():
     )
 
     payload_tahmo = {}
-    headers_tahmo = {"Authorization": "Basic ZnV0dXJld2F0ZXI6R2MzYVdMN3kyckRkR2Y3RQ=="}
+    headers_tahmo = {
+        "Authorization": "Basic ZnV0dXJld2F0ZXI6R2MzYVdMN3kyckRkR2Y3RQ=="}
 
     response_tahmo = requests.request(
         "GET", url_tahmo, headers=headers_tahmo, data=payload_tahmo
@@ -511,8 +521,10 @@ for farmer in response_api.json():
     if result:
         # SOLUTION TO DISTANCE PROBLEM :)
         results = pd.json_normalize(result, "results", "distance")
-        results2 = results.drop(columns=["_id", "Wetness", "FC", "RAM", "WP", "Eact"])
-        results2["Day"] = pd.to_datetime(results2["Time"]).dt.strftime("%m/%d/%y")
+        results2 = results.drop(
+            columns=["_id", "Wetness", "FC", "RAM", "WP", "Eact"])
+        results2["Day"] = pd.to_datetime(
+            results2["Time"]).dt.strftime("%m/%d/%y")
         results2.drop(columns=["Time"])
 
         days = results2.pivot_table("Eref", "Day", "Station")
@@ -609,8 +621,10 @@ for farmer in response_api.json():
             dsw = image.select(
                 "Downward_Short-Wave_Radiation_Flux_surface_6_Hour_Average"
             )
-            dlw = image.select("Downward_Long-Wave_Radp_Flux_surface_6_Hour_Average")
-            ulw = image.select("Upward_Long-Wave_Radp_Flux_surface_6_Hour_Average")
+            dlw = image.select(
+                "Downward_Long-Wave_Radp_Flux_surface_6_Hour_Average")
+            ulw = image.select(
+                "Upward_Long-Wave_Radp_Flux_surface_6_Hour_Average")
             usw = dsw.multiply(0.23).rename(
                 "Upward_Short-Wave_Radiation_Flux_surface_6_Hour_Average"
             )
@@ -847,10 +861,12 @@ for farmer in response_api.json():
     # ---- HERE all KC values are put in a dataframe and now we can multiply the dataframe with KC values with the ETref values
 
     if result:
-        KcJoin = ee.ImageCollection(simpleJoin.apply(TAHMO_Eref, Kc_season, doyFilter))
+        KcJoin = ee.ImageCollection(
+            simpleJoin.apply(TAHMO_Eref, Kc_season, doyFilter))
         print("tahmodata used")
     else:
-        KcJoin = ee.ImageCollection(simpleJoin.apply(ET0, Kc_season, joinFilter))
+        KcJoin = ee.ImageCollection(
+            simpleJoin.apply(ET0, Kc_season, joinFilter))
         print("CFSv2 data used")
 
     def func_kc(feature):
@@ -932,7 +948,8 @@ for farmer in response_api.json():
 
     nested_list2 = (
         poi_reduced_imgs2.reduceColumns(
-            ee.Reducer.toList(5), ["Date", "ModelRun", "Etc", "Irrvol", "Irrtime"]
+            ee.Reducer.toList(5), ["Date", "ModelRun",
+                                   "Etc", "Irrvol", "Irrtime"]
         )
         .values()
         .get(0)
@@ -953,7 +970,8 @@ for farmer in response_api.json():
     df2["modelRun"] = df2["date"].dt.strftime("%Y%m%d") + "_SAT" + stringday
     # .map(lambda x: str(x)[-5:])
     df2["datedisp"] = df2["date"] + pd.DateOffset(days=0)
-    df2["dateDisplay"] = df2["datedisp"].dt.strftime("%d-%m").map(lambda x: str(x)[-5:])
+    df2["dateDisplay"] = df2["datedisp"].dt.strftime(
+        "%d-%m").map(lambda x: str(x)[-5:])
     df2["date"] = pd.to_datetime(
         df2["date"] + pd.DateOffset(days=0), format="%d-%m-%Y"
     ).dt.strftime("%Y-%m-%d")
@@ -982,6 +1000,7 @@ for farmer in response_api.json():
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_hind = requests.post(url_hind, headers=headers_hind, data=data_json_hind)
+    response_hind = requests.post(
+        url_hind, headers=headers_hind, data=data_json_hind)
 
     response_hind.json()
