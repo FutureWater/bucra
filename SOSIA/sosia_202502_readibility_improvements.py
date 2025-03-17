@@ -33,8 +33,7 @@ response_api = requests.request(
 print(response_api.json())
 
 # Process each farmer in the response data
-farmer = response_api.json()[0]  # Initialize with first farmer
-for farmer in response_api.json():
+for farmer in response_api.json()[:1]:
     # Extract farmer field information from JSON
     field_id = farmer["id"]
     print(field_id)
@@ -42,13 +41,12 @@ for farmer in response_api.json():
     latitude = farmer["latitude"]
     longitude = farmer["longitude"]
     if latitude == None or longitude == None:
+        # Skip farmers with missing location data (e.g. Holland Green Tech)
         continue
     lat_float = float(latitude)
     long_float = float(longitude)
     field_point = ee.Geometry.Point(long_float, lat_float)
     point_coords = str(longitude) + "," + str(latitude)
-
-    # Skip farmers with missing location data (e.g. Holland Green Tech)
 
     # Extract irrigation system parameters
     drip_lines_count = farmer["numberOfDriplines"]
@@ -984,7 +982,7 @@ for farmer in response_api.json():
     # Join ET reference with Kc values - different join methods for TAHMO vs CFSv2
     if tahmo_result:
         # Join TAHMO ET with Kc by DOY (day of year)
-        kc_et_join = ee.ImageCollection(simpleJoin.apply(
+        kc_et_join = ee.ImageCollection(simple_join.apply(
             tahmo_et_collection, kc_all_renamed, doy_filter))
         print("TAHMO data used")
     else:
