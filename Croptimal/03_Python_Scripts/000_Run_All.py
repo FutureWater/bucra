@@ -3,21 +3,16 @@ import os
 import glob
 import datetime
 import calendar
-from functools import reduce
-from itertools import product
+import subprocess
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import geopandas as gpd
 import rasterio
-from rasterio import features
-from osgeo import gdal, ogr, osr
-import xarray as xr
-import json
-import requests
-import tempfile
-import time
-import shutil
+from rasterio.env import Env
+import matplotlib.pyplot as plt
+
 
 ##############################################################################################
 ################################### START OF DATA INPUT ######################################
@@ -26,16 +21,18 @@ import shutil
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
 
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
 # General Folder directories
-DATA_DIR = os.path.join(parent_wd, "01_Data")
-GIS_DIR = os.path.join(parent_wd, "O2_GIS")
-SCRIPTS_DIR = os.path.join(parent_wd, "03_R_Scripts")
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")
+SCRIPTS_DIR = os.path.join(parent_wd, "03_Python_Scripts")
 RESULTS_DIR = os.path.join(parent_wd, "04_Results")
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
 # Input data directories
-PROVINCES = os.path.join(GIS_DIR, "Shapefiles")
-COMMUNES = os.path.join(PROVINCES, "AGO_adm3.shp")
+PROVINCES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+COMMUNES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
 DEM = os.path.join(DATA_DIR, "Elevation", "SRTM_30m_Angola_mask.tif")
 HHS_DATA_DIR = os.path.join(DATA_DIR, "__TO_DROPBOX__", "Top_Subsoil")
 CROPPING_CALENDER = os.path.join(SCRIPTS_DIR, "Cropping_calendar.csv")
@@ -74,9 +71,9 @@ P_perc_names = ["Drier", "Much_Drier"]
 #################### CREATE SCENARIOS AND CROPPING CALENDARS FOR EACH SCENARIO ###############
 ##############################################################################################
 # Load DEM raster
-with rasterio.open(DEM) as src:
-    DEM_r = src.read(1)
-    dem_profile = src.profile
+# with rasterio.open(DEM) as src:
+#     DEM_r = src.read(1)
+#     dem_profile = src.profile
 
 # Read provinces shapefile
 provinces_shp = gpd.read_file(PROVINCES)
@@ -165,7 +162,7 @@ for _, row in cropping_cal.iterrows():
     crop = row['Crop']
     start_month = row['Start_growing_season']
     end_month = row['End_growing_season']
-    name_col = f"{crop}_{month.abb[start_month-1]}_{month.abb[end_month-1]}"
+    name_col = f"{crop}_{month_abbr[start_month-1]}_{month_abbr[end_month-1]}"
     communes_df[name_col] = np.nan
 
 # Create CSV files for each climate scenario
@@ -176,73 +173,86 @@ for comb in unique_combis:
 ##############################################################################################
 ###################### SETUP RASTER OPTIONS AND SWITCH VALUES ################################
 ##############################################################################################
-# Set up raster options (Python doesn't have direct equivalent, but we can control memory usage in other ways)
-# We would handle memory management differently in Python, using chunking in rasterio/xarray as needed
-rasterio.env.default_options.update({
-    'overwrite': True,
-    'max_memory': 1e+10,
-    'chunksize': 0.1e+10,
-    'tmpdir': TEMP_DIR
-})
-start_time = datetime.datetime.now()
+# Set up raster options to prevent excessive memory or hard disk use.
+with Env(
+    GDAL_CONFIG_OPTIONS={
+        'GDAL_MAX_MEM_ALLOC': '1e+10',  # Set maximum memory allocation
+        'GDAL_CACHEMAX': '0.1e+10'      # Set chunk size
+    },
+    TEMP_DIR=TEMP_DIR
+):
+    start_time = datetime.datetime.now()
 
-# Hardcoded switch value (as in the original script)
-switch = 2
-n = 15 if switch == 2 else (10 if switch == 1 else 1)
+    # Hardcoded switch value (as in the original script)
+    switch = 0
+    n = 15 if switch == 2 else (10 if switch == 1 else 1)
 
-# Example: Running seasonal forecast (Script 8) if switch is 2
-# Import helper function for switch == 15
-if n == 15:
-    # Implement your Seasonal Forecast function here
-    print("Need to convert and import: 01_Download_Seasonal_forecast_WI_API.R to Python")
-    # In Python this would be something like:
-    # from helper_functions.download_seasonal_forecast import download_seasonal_forecast
-    pass
-
-
-##############################################################################################
-###################### RUN THROUGH ALL SCRIPTS FOR ALL PROVINCES #############################
-##############################################################################################
-# Create list of all scripts
-list_scripts = [script for script in glob.glob(os.path.join(
-    SCRIPTS_DIR, "*.py")) if "000_Run_All.py" not in script]
-
-# Process all provinces
-for script_index in range(n-1, len(list_scripts)):
-    print("Script:", script_index)
-
-    # When running only one province
-    # province_names = provinces_names[1]
-    for name in provinces_names:
-        # Clean temporary files (equivalent to rasterTmpFile in R)
-        temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
-        for f in temp_files:
-            try:
-                os.remove(f)
-            except:
-                pass
-
-        # Filter province shapefile
-        province_shp = provinces_shp[provinces_shp['NAME_1'] == name]
-        province_name = name.replace(" ", "_")
-        indir = os.path.join(RESULTS_DIR, province_name, "")
-
+    # Example: Running seasonal forecast (Script 8) if switch is 2
+    # Import helper function for switch == 15
+    if n == 15:
+        # Implement your Seasonal Forecast function here
         print(
-            f"Province: {province_name} & script: {os.path.basename(list_scripts[script_index])}")
+            "Need to convert and import: 01_Download_Seasonal_forecast_WI_API.R to Python")
+        # In Python this would be something like:
+        # from helper_functions.download_seasonal_forecast import download_seasonal_forecast
+        pass
 
-        # Source the script - in Python we would use exec() or import
-        # This would need conversion of each individual R script to Python
-        print(
-            f"Need to run Python equivalent of: {list_scripts[script_index]}")
+    ##############################################################################################
+    ###################### RUN THROUGH ALL SCRIPTS FOR ALL PROVINCES #############################
+    ##############################################################################################
+    # Create list of all scripts with relative file paths
+    list_scripts = [script for script in glob.glob(os.path.join(
+        SCRIPTS_DIR, "*.py")) if "000_Run_All.py" not in script]
+    scripts_dir = Path(SCRIPTS_DIR)
+    list_scripts = [str(script.relative_to(scripts_dir)) for script in scripts_dir.glob(
+        "*.py") if script.name != "000_Run_All.py"]
 
-        # Clean temporary files
-        temp_files = glob.glob(os.path.join(TEMP_DIR, "*.tif"))
-        for f in temp_files:
+    # Process all scripts
+    list_scripts = list_scripts[:1]
+    for script in list_scripts:
+        print("Script:", script)
+        # Run the script for each province.
+        province_names = provinces_names[:1]  # When running only one province
+        for name in provinces_names:
+            # Clean temporary files to have a clean folder to work with.
+            temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
+            for f in temp_files:
+                try:
+                    os.remove(f)
+                except:
+                    pass
+
+            # Get province name as string
+            province_shp = provinces_shp[provinces_shp['NAME_1'] == name]
+            province_name = name.replace(" ", "_")
+
+            # Run the script with subprocess
+            print(
+                f"Run Python : {script} for province:{province_name}.")
+            myenv = os.environ.copy()
+            myenv["PROVINCE"] = province_name
+            # Try to run code with subprocess. When script fails, print error message.
             try:
-                os.remove(f)
-            except:
-                pass
+                result = subprocess.run(["python", script],
+                                        env=myenv,
+                                        check=True,
+                                        capture_output=True,
+                                        text=True)
+            except subprocess.CalledProcessError as e:
+                print(
+                    f"Error running script {script} for province {province_name}")
+                print(e.stdout)
+                print(e.stderr)
 
+            # Clean temporary files
+            temp_files = glob.glob(os.path.join(TEMP_DIR, "*.tif"))
+            for f in temp_files:
+                try:
+                    os.remove(f)
+                except:
+                    pass
+
+# End of for loop. All scripts for all provinces have been run.
 end_time = datetime.datetime.now()
 print(f"Time elapsed: {end_time - start_time}")
 
