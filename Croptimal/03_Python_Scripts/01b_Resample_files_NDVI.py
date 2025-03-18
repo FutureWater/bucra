@@ -22,26 +22,37 @@ This script processes NDVI files by:
 ########################## Define directories and file paths #######################################
 ####################################################################################################
 # Define directories and file paths
-DATA_DIR = "your_data_directory"
-RESULTS_DIR = "your_results_directory"
-PROVINCE_NAME = "your_province_name"
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Set directories
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 RES = 250  # Set resolution
 
 # Create output directory
-NEW_DIR = os.path.join(RESULTS_DIR, PROVINCE_NAME, "NDVI", "Mean_Monthly")
-os.makedirs(NEW_DIR, exist_ok=True)
+NDVI_MM_DIR = os.path.join(RESULTS_DIR, "NDVI", "Mean_Monthly")
+os.makedirs(NDVI_MM_DIR, exist_ok=True)
 
 # Get input files
-INPUT_FILES = glob.glob(os.path.join(
-    DATA_DIR, "NDVI", PROVINCE_NAME, "Mean_Monthly", "*.tif"))
+# INPUT_FILES = glob.glob(os.path.join(
+#     DATA_DIR, "NDVI", PROVINCE_NAME, "Mean_Monthly", "*.tif"))
+# Dummy raster, as we miss NDVI rasters currently.
+INPUT_FILES = [os.path.join(
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")]
 NAMES_RASTER = [os.path.basename(f) for f in INPUT_FILES]
 
 # Import DEM for reference extent and resolution
-DEM_DIFF_PATH = os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
+DEM_PATH = os.path.join(RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
-print(f"Loading reference DEM: {DEM_DIFF_PATH}")
-with rasterio.open(DEM_DIFF_PATH) as dem_src:
+print(f"Loading reference DEM: {DEM_PATH}")
+with rasterio.open(DEM_PATH) as dem_src:
     DEM_META = dem_src.meta.copy()
     DEM_BOUNDS = dem_src.bounds
     DEM_TRANSFORM = dem_src.transform
@@ -86,7 +97,7 @@ for i, input_file in enumerate(INPUT_FILES):
 
         # Step 3: Save the resampled and cropped raster
         output_path = os.path.join(
-            NEW_DIR, f"{os.path.splitext(NAMES_RASTER[i])[0]}.tiff")
+            NDVI_MM_DIR, f"{os.path.splitext(NAMES_RASTER[i])[0]}.tif")
         output_meta = DEM_META.copy()
         output_meta.update({
             "driver": "GTiff",
