@@ -20,7 +20,6 @@ import matplotlib.pyplot as plt
 # Get current working directory.
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
-
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
 # General Folder directories
