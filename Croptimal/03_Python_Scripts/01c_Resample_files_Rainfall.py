@@ -7,6 +7,7 @@ import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.mask import mask
 import geopandas as gpd
+import matplotlib.pyplot as plt
 
 
 """
@@ -23,14 +24,25 @@ This script processes monthly rainfall data by:
 ########################## Define directories and file paths #######################################
 ####################################################################################################
 # Define directories and file paths
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
-RES = 250  # Resolution in meters
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Set input data directories
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+RES = 250  # Set resolution
 
 # Create output directory for processed rainfall data
-NEW_DIR = os.path.join(RESULTS_DIR, PROVINCE_NAME, "Rainfall", "Mean_Monthly")
-os.makedirs(NEW_DIR, exist_ok=True)
+RESULTS_RAINFALL_DIR = os.path.join(RESULTS_DIR, "Rainfall", "Mean_Monthly")
+os.makedirs(RESULTS_RAINFALL_DIR, exist_ok=True)
 
 
 ####################################################################################################
@@ -91,10 +103,10 @@ for month_idx, month in sorted([(int(k), k) for k in MONTHLY_GROUPS.keys()]):
     month_data = []
     for file in files:
         with rasterio.open(file) as src:
-            month_data.append(src.read(1))
             # Save profile from first file for this month
             if not month_data:
                 profile = src.profile.copy()
+            month_data.append(src.read(1))
 
     # Calculate mean for this month (equivalent to stackApply with mean function)
     if month_data:
@@ -102,20 +114,20 @@ for month_idx, month in sorted([(int(k), k) for k in MONTHLY_GROUPS.keys()]):
         MEAN_RAINFALL_DATA.append(month_mean)
         MEAN_RAINFALL_PROFILES.append(profile)
 
+    else:
+        print(f"Warning: No data found for month {month}")
+
 # Load province shapefile
 print("Loading province shapefile...")
-PROVINCE_SHP_PATH = os.path.join(
-    DATA_DIR, f"{PROVINCE_NAME}.shp")  # Adjust path as needed
-PROVINCE_SHP = gpd.read_file(PROVINCE_SHP_PATH)
-
-# Create a buffer around province shapefile (equivalent to gBuffer in R)
+provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
+PROVINCE_SHP_SEL = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 print("Creating buffer around province...")
-PROVINCE_BUFFER = PROVINCE_SHP.buffer(0.25)  # Buffer of 0.25 degrees
+PROVINCE_BUFFER = PROVINCE_SHP_SEL.buffer(0.25)  # Buffer of 0.25 degrees
 
 # Load reference DEM
 print("Loading reference DEM...")
-DEM_PATH = os.path.join(RESULTS_DIR, PROVINCE_NAME, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
+DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
 with rasterio.open(DEM_PATH) as dem_src:
     DEM_META = dem_src.meta.copy()
     DEM_TRANSFORM = dem_src.transform
@@ -133,7 +145,8 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
 
     # We need to create a temporary raster to perform masking
     # since we have the data as numpy arrays, not as raster files
-    TEMP_RASTER_PATH = os.path.join(NEW_DIR, f"temp_{month_name}.tif")
+    TEMP_RASTER_PATH = os.path.join(
+        TEMP_DIR, f"temp_precipitation_{month_name}.tif")
     with rasterio.open(TEMP_RASTER_PATH, 'w', **month_profile) as temp:
         temp.write(month_data, 1)
 
@@ -161,12 +174,13 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     resampled_data = np.zeros(DEM_SHAPE, dtype=month_data.dtype)
 
     # Need another temporary file for the cropped data
-    CROPPED_TEMP_PATH = os.path.join(NEW_DIR, f"cropped_temp_{month_name}.tif")
-    with rasterio.open(CROPPED_TEMP_PATH, 'w', **out_meta) as temp:
+    TEMP_CROPPED_PATH = os.path.join(
+        TEMP_DIR, f"cropped_temp_{month_name}.tif")
+    with rasterio.open(TEMP_CROPPED_PATH, 'w', **out_meta) as temp:
         temp.write(out_image[0], 1)
 
     # Now reproject from the cropped temp file to match DEM
-    with rasterio.open(CROPPED_TEMP_PATH) as src:
+    with rasterio.open(TEMP_CROPPED_PATH) as src:
         reproject(
             source=rasterio.band(src, 1),
             destination=resampled_data,
@@ -178,7 +192,7 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
         )
 
     # Save the final resampled file
-    OUTPUT_PATH = os.path.join(NEW_DIR, f"{month_name}.tif")
+    OUTPUT_PATH = os.path.join(RESULTS_RAINFALL_DIR, f"{month_name}.tif")
     out_meta = DEM_META.copy()
     with rasterio.open(OUTPUT_PATH, 'w', **out_meta) as dst:
         dst.write(resampled_data, 1)
@@ -186,7 +200,7 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     # Clean up temporary files
     try:
         os.remove(TEMP_RASTER_PATH)
-        os.remove(CROPPED_TEMP_PATH)
+        os.remove(TEMP_CROPPED_PATH)
     except Exception as e:
         print(f"  Warning: Could not remove temporary files: {e}")
 
