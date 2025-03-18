@@ -27,16 +27,12 @@ GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 PARAMETERS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
-PROVINCES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
-
 # Set resolution and projection
 RES = 250                                       # Set resolution in meters
 LOCAL_PROJ = "EPSG:32733"
 
-# Function to ensure directory exists
 
-
-def ensure_dir(directory):
+def ensure_dir(directory):  # Function to ensure directory exists
     os.makedirs(directory, exist_ok=True)
 
 
@@ -135,7 +131,7 @@ with rasterio.open(cropped_dem_path) as src:
 
 # Step 5: Calculate difference between bilinear and nearest neighbor
 # Unclear why we need this for now.
-# diff_dem = bilinear_dem - ngb_dem
+# diffd_dem = bilinear_dem - ngb_dem
 
 # # Step 6: Write results to files
 print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
