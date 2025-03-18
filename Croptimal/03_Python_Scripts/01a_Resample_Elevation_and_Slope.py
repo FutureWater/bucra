@@ -50,7 +50,7 @@ ensure_dir(INDIR_ELEV)
 
 # Load original DEM (assuming it's already available)
 DEM_PATH = os.path.join(DATA_DIR, "Elevation",
-                        "SRTM_30M_Angola.tif")  # Check which dem
+                        "SRTM_30M_Angola_mask.tif")  # Check which dem
 
 # Load province shapefile
 PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
@@ -102,7 +102,7 @@ target_transform = rasterio.transform.from_bounds(
 )  # (left, bottom, right, top, width, height)
 
 # Step 3: Reproject using bilinear method
-print(f"Bilinear projectRaster DEM: {PROVINCE_NAME}")
+print(f"Bilinear Resampling Raster DEM: {PROVINCE_NAME}")
 bilinear_dem = np.zeros((height, width), dtype=np.float32)
 
 # Fill bilinear_dem array with resampled values.
@@ -138,7 +138,7 @@ with rasterio.open(cropped_dem_path) as src:
 # diff_dem = bilinear_dem - ngb_dem
 
 # # Step 6: Write results to files
-print(f"Write rasters DEM: {PROVINCE_NAME}")
+print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
 # Metadata for output files
 out_meta = {
     "driver": "GTiff",
@@ -193,7 +193,7 @@ slope_threshold = float(
 slope_lower_limit = (slope < slope_threshold).astype(np.uint8)
 
 # Save threshold raster
-print(f"Write rasters lower slope limit {PROVINCE_NAME}")
+print(f"Write rasters slope and slope limit: {PROVINCE_NAME}")
 lower_slope_path = os.path.join(
     INDIR_ELEV, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
 out_meta.update({"dtype": "uint8"})
@@ -203,4 +203,4 @@ with rasterio.open(lower_slope_path, "w", **out_meta) as dst:
 # Remove temporary files
 os.remove(cropped_dem_path)
 
-print(f"Processing complete for {PROVINCE_NAME}")
+print(f"Processing complete for {PROVINCE_NAME}\n")
