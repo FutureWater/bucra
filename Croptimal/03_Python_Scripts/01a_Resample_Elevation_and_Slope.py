@@ -54,34 +54,51 @@ provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
 PROVINCE_SHP_SEL = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 
 ##############################################################################################
-############################# CALCULATE ELEVATION AND SLOPE ##################################
+######################################### Mask DEM ###########################################
 ##############################################################################################
 # Step 1: Crop and mask DEM with province shapefile.
 print(f"Crop DEM: {PROVINCE_NAME}")
 with rasterio.open(DEM_PATH) as src:
+    # Get src data and profile
+    src_nodata = src.nodata
+    profile = src.profile.copy()
+    data = src.read(1)
+
     # Project shapefile to match DEM CRS if needed
     if PROVINCE_SHP_SEL.crs != src.crs:
         PROVINCE_SHP_SEL = PROVINCE_SHP_SEL.to_crs(src.crs)
+
+    # masked_data = np.ma.masked_equal(src, old_src_nodata)
+    # plt.imshow(data, cmap='viridis')
+    # plt.colorbar(label='Elevation (m)')
+    # plt.title('Original DEM')
+    # plt.show()
 
     # Crop DEM to shapefile extent.
     out_image, out_transform = mask(src, PROVINCE_SHP_SEL.geometry, crop=True)
 
     # Copy metadata. Transform matrix is taken from DEM.
-    out_meta = src.meta.copy()
-    out_meta.update({
+    out_profile = profile.copy()
+    out_profile.update({
         "driver": "GTiff",
         "height": out_image.shape[1],
         "width": out_image.shape[2],
-        # (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
-        "transform": out_transform
+        # Transform: (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
+        "transform": out_transform,
+        'nodata': src_nodata,
+        'dtype': 'float32',
     })
 
-    # Save cropped DEM to temporary file
-    cropped_dem_path = os.path.join(
-        TEMP_DIR, f"cropped_dem_{PROVINCE_NAME}_temp.tif")
-    with rasterio.open(cropped_dem_path, "w", **out_meta) as dest:
-        dest.write(out_image)
+# Save cropped DEM to temporary file
+cropped_dem_path = os.path.join(
+    TEMP_DIR, f"cropped_dem_{PROVINCE_NAME}_temp.tif")
+with rasterio.open(cropped_dem_path, "w", **out_profile) as dest:
+    dest.write(out_image)
 
+
+##############################################################################################
+############################# RESAMPLE ELEVATION AND SLOPE ###################################
+##############################################################################################
 # Step 2: Prepare target raster with desired resolution and projection for resampling.
 print(f"Setting up target raster grid: {PROVINCE_NAME}")
 # Project province shapefile to local projection for determining bounds
@@ -101,16 +118,21 @@ target_transform = rasterio.transform.from_bounds(
 print(f"Bilinear Resampling Raster DEM: {PROVINCE_NAME}")
 bilinear_dem = np.zeros((height, width), dtype=np.float32)
 
-# Fill bilinear_dem array with resampled values.
+new_nodata = float(-9999)
 with rasterio.open(cropped_dem_path) as src:
+
+    # print("Cropped DEM profile:", src.profile)
+
     reproject(
         source=src.read(1),
         destination=bilinear_dem,
         src_transform=src.transform,
         src_crs=src.crs,
+        src_nodata=src.nodata,
         # Transform matrix from local projection Transform = (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
         dst_transform=target_transform,
         dst_crs=LOCAL_PROJ,
+        dst_nodata=new_nodata,
         resampling=Resampling.bilinear
     )
 
@@ -136,19 +158,20 @@ with rasterio.open(cropped_dem_path) as src:
 # # Step 6: Write results to files
 print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
 # Metadata for output files
-out_meta = {
+out_profile = {
     "driver": "GTiff",
     "height": height,
     "width": width,
     "count": 1,
     "dtype": bilinear_dem.dtype,
     "crs": LOCAL_PROJ,
-    "transform": target_transform
+    "transform": target_transform,
+    "nodata": new_nodata
 }
 
 # Write bilinear resampled DEM
 bilinear_path = os.path.join(DEM_DATA_DIR, f"DEM_{PROVINCE_NAME}_{RES}m.tif")
-with rasterio.open(bilinear_path, "w", **out_meta) as dst:
+with rasterio.open(bilinear_path, "w", **out_profile) as dst:
     dst.write(bilinear_dem, 1)
 
 # # Write difference raster
@@ -179,7 +202,7 @@ slope = calculate_slope(bilinear_dem)
 
 # Save slope raster
 slope_path = os.path.join(INDIR_ELEV, f"Slope_{PROVINCE_NAME}.tif")
-with rasterio.open(slope_path, "w", **out_meta) as dst:
+with rasterio.open(slope_path, "w", **out_profile) as dst:
     dst.write(slope.astype(rasterio.float32), 1)
 
 # Step 8: Calculate areas with slope less than threshold
@@ -192,8 +215,8 @@ slope_lower_limit = (slope < slope_threshold).astype(np.uint8)
 print(f"Write rasters slope and slope limit: {PROVINCE_NAME}")
 lower_slope_path = os.path.join(
     INDIR_ELEV, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
-out_meta.update({"dtype": "uint8"})
-with rasterio.open(lower_slope_path, "w", **out_meta) as dst:
+
+with rasterio.open(lower_slope_path, "w", **out_profile) as dst:
     dst.write(slope_lower_limit, 1)
 
 # Remove temporary files
