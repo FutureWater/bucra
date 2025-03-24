@@ -117,13 +117,6 @@ for month_idx, month in sorted([(int(k), k) for k in MONTHLY_GROUPS.keys()]):
     else:
         print(f"Warning: No data found for month {month}")
 
-# Load province shapefile
-print("Loading province shapefile...")
-provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
-PROVINCE_SHP_SEL = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-print("Creating buffer around province...")
-PROVINCE_BUFFER = PROVINCE_SHP_SEL.buffer(0.25)  # Buffer of 0.25 degrees
-
 # Load reference DEM
 print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
@@ -134,11 +127,24 @@ with rasterio.open(DEM_PATH) as dem_src:
     DEM_CRS = dem_src.crs
     DEM_SHAPE = (dem_src.height, dem_src.width)
 
+# Load province shapefile: (EPSG:4326)
+print("Loading province shapefile...")
+provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
+
+# Reproject to match DEM and have CRS with units in meters. CRS: (EPSG:32733)
+province_shp_sel = province_shp_sel.to_crs(DEM_CRS)
+
+# Create a buffer around province shapefile
+print("Creating buffer around province...")
+province_buffer = province_shp_sel.buffer(500)  # Buffer of 500
+
 # List of month abbreviations (equivalent to month.abb in R)
 MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
 
 # Process each month
 for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAINFALL_PROFILES)):
+    # Get month name and index
     month_idx = i + 1  # 1-based month index
     month_name = MONTH_ABBRS[i]
     print(f"Processing {month_name}...")
@@ -151,14 +157,15 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
         temp.write(month_data, 1)
 
     # Crop raster to the buffered province boundary
-    print(f"  Cropping {month_name} to province boundary...")
+    print(f"  Cropping {month_name} to province boundary.")
     with rasterio.open(TEMP_RASTER_PATH) as src:
-        # Ensure CRS compatibility
-        if src.crs != PROVINCE_SHP.crs:
-            PROVINCE_BUFFER_PROJECTED = PROVINCE_BUFFER.to_crs(src.crs)
+        # Ensure CRS province buffer and rainfall raster match: (EPSG:4326)
+        if src.crs != province_buffer.crs:
+            PROVINCE_BUFFER_PROJECTED = province_buffer.to_crs(src.crs)
         else:
-            PROVINCE_BUFFER_PROJECTED = PROVINCE_BUFFER
+            PROVINCE_BUFFER_PROJECTED = province_buffer
 
+        # Crop raster with correct metadata
         out_image, out_transform = mask(
             src, PROVINCE_BUFFER_PROJECTED.geometry, crop=True)
         out_meta = src.meta.copy()
@@ -173,13 +180,13 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     print(f"  Resampling {month_name}...")
     resampled_data = np.zeros(DEM_SHAPE, dtype=month_data.dtype)
 
-    # Need another temporary file for the cropped data
+    # Create another temporary file for the cropped data
     TEMP_CROPPED_PATH = os.path.join(
         TEMP_DIR, f"cropped_temp_{month_name}.tif")
     with rasterio.open(TEMP_CROPPED_PATH, 'w', **out_meta) as temp:
         temp.write(out_image[0], 1)
 
-    # Now reproject from the cropped temp file to match DEM
+    # Now resample from the cropped temp file to match DEM crs and resolution
     with rasterio.open(TEMP_CROPPED_PATH) as src:
         reproject(
             source=rasterio.band(src, 1),

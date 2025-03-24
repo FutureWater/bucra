@@ -41,11 +41,11 @@ NDVI_MM_DIR = os.path.join(RESULTS_DIR, "NDVI", "Mean_Monthly")
 os.makedirs(NDVI_MM_DIR, exist_ok=True)
 
 # Get input files
-# INPUT_FILES = glob.glob(os.path.join(
-#     DATA_DIR, "NDVI", PROVINCE_NAME, "Mean_Monthly", "*.tif"))
+INPUT_FILES = glob.glob(os.path.join(
+    DATA_DIR, "NDVI", PROVINCE_NAME, "Mean_Monthly", "*.tif"))
 # Dummy raster, as we miss NDVI rasters currently.
-INPUT_FILES = [os.path.join(
-    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")]
+# INPUT_FILES = [os.path.join(
+#     RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")]
 NAMES_RASTER = [os.path.basename(f) for f in INPUT_FILES]
 
 # Import DEM for reference extent and resolution

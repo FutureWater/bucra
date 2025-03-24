@@ -68,12 +68,6 @@ with rasterio.open(DEM_PATH) as src:
     if PROVINCE_SHP_SEL.crs != src.crs:
         PROVINCE_SHP_SEL = PROVINCE_SHP_SEL.to_crs(src.crs)
 
-    # masked_data = np.ma.masked_equal(src, old_src_nodata)
-    # plt.imshow(data, cmap='viridis')
-    # plt.colorbar(label='Elevation (m)')
-    # plt.title('Original DEM')
-    # plt.show()
-
     # Crop DEM to shapefile extent.
     out_image, out_transform = mask(src, PROVINCE_SHP_SEL.geometry, crop=True)
 
@@ -120,9 +114,6 @@ bilinear_dem = np.zeros((height, width), dtype=np.float32)
 
 new_nodata = float(-9999)
 with rasterio.open(cropped_dem_path) as src:
-
-    # print("Cropped DEM profile:", src.profile)
-
     reproject(
         source=src.read(1),
         destination=bilinear_dem,
@@ -182,9 +173,8 @@ with rasterio.open(bilinear_path, "w", **out_profile) as dst:
 # Step 7: Calculate and save slope
 print(f"Calculate slope DEM: {PROVINCE_NAME}")
 
+
 # Calculate slope using 3x3 windows (equivalent to terrain with neighbors=8)
-
-
 def calculate_slope(dem, cell_size=RES):
     # Calculate gradients
     dx = sobel(dem, axis=1) / (8 * cell_size)
