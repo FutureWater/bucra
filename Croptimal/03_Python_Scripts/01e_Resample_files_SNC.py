@@ -2,10 +2,11 @@ import os
 import glob
 import rasterio
 import numpy as np
-from rasterio.warp import reproject, Resampling
+from rasterio.warp import reproject, Resampling, calculate_default_transform
 from rasterio.mask import mask
 import geopandas as gpd
 from rasterio.merge import merge
+import matplotlib.pyplot as plt
 
 """
 This script processes Soil Nutrient Content (SNC) data by:
@@ -34,6 +35,7 @@ RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 RES = 250  # Set resolution in meters
 LOCAL_PROJ = "EPSG:32733"
+NO_DATA_VALUE = -9999.0
 
 # Create output directory for processed SNC data
 SNC_RESULTS_DIR = os.path.join(RESULTS_DIR, "Soil_Nutrient_Content")
@@ -62,19 +64,19 @@ provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 province_shp_proj = province_shp_sel.to_crs(LOCAL_PROJ)
 
-# Create a buffer around province shapefile (equivalent to gBuffer in R)
+# Create a buffer around province shapefile
 print("Creating buffer around province...")
-province_buffer = province_shp_proj.buffer(0.25)  # Buffer of 0.25 degrees
+province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
 
 # Load reference DEM
 print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
                         f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
 with rasterio.open(DEM_PATH) as dem_src:
-    dem_meta = dem_src.meta.copy()
-    dem_transform = dem_src.transform
-    dem_crs = dem_src.crs
-    dem_shape = (dem_src.height, dem_src.width)
+    DEM_META = dem_src.meta.copy()
+    DEM_TRANSFORM = dem_src.transform
+    DEM_CRS = dem_src.crs
+    DEM_SHAPE = (dem_src.height, dem_src.width)
 
 # Process each SNC file
 for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
@@ -90,49 +92,46 @@ for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
             province_buffer_projected = province_buffer
 
         # Crop raster to the buffered province boundary
-        print(f"  Cropping to province boundary...")
+        print("Cropping to province boundary...")
         out_image, out_transform = mask(
-            src, province_buffer_projected.geometry, crop=True)
+            src, province_buffer_projected.geometry, crop=True, nodata=NO_DATA_VALUE)
+
+        # Save metadata of raster
         out_meta = src.meta.copy()
-        out_meta.update({
-            "driver": "GTiff",
-            "height": out_image.shape[1],
-            "width": out_image.shape[2],
-            "transform": out_transform,
-        })
 
-    # Need a temporary file for the cropped data
-    temp_path = os.path.join(
-        TEMP_DIR, f"temp_{os.path.basename(input_file)}")
-    with rasterio.open(temp_path, 'w', **out_meta) as temp:
-        temp.write(out_image[0], 1)
-
-    # Resample to match DEM resolution and extent
-    print(f"  Resampling to match DEM...")
-    resampled_data = np.zeros(dem_shape, dtype=np.float32)
-
-    # Now reproject from the cropped temp file to match DEM
-    with rasterio.open(temp_path) as src:
-        reproject(
-            source=rasterio.band(src, 1),
-            destination=resampled_data,
-            src_transform=src.transform,
-            src_crs=src.crs,
-            dst_transform=dem_transform,
-            dst_crs=dem_crs,
-            resampling=Resampling.bilinear
+        # Get transform and shape new raster converted to local projection
+        dst_transform, dst_width, dst_height = calculate_default_transform(
+            src.crs, DEM_CRS, src.width, src.height,
+            *rasterio.transform.array_bounds(out_image.shape[1], out_image.shape[2], out_transform),
+            resolution=RES
         )
 
-    # Save the final resampled file
-    OUTPUT_PATH = os.path.join(SNC_RESULTS_DIR, output_name)
-    out_meta = dem_meta.copy()
-    with rasterio.open(OUTPUT_PATH, 'w', **out_meta) as dst:
-        dst.write(resampled_data.astype(rasterio.float32), 1)
+        # Resample to match DEM resolution and extent
+        print("  Resampling to match DEM...")
+        destination_array = np.full(DEM_SHAPE, NO_DATA_VALUE, dtype=np.float32)
 
-    # Clean up temporary file
-    try:
-        os.remove(temp_path)
-    except Exception as e:
-        print(f"  Warning: Could not remove temporary file: {e}")
+        out_meta.update({
+            "crs": DEM_CRS,
+            "transform": dst_transform,
+            "width": dst_width,
+            "height": dst_height,
+            "nodata": NO_DATA_VALUE
+        })
+
+        OUTPUT_PATH = os.path.join(SNC_RESULTS_DIR, output_name)
+
+        with rasterio.open(OUTPUT_PATH, 'w', **out_meta) as dst:
+            reproject(
+                source=out_image[0],
+                destination=destination_array,
+                src_transform=out_transform,
+                src_crs=src.crs,
+                dst_transform=DEM_TRANSFORM,
+                dst_crs=DEM_CRS,
+                resampling=Resampling.bilinear,
+                src_nodata=NO_DATA_VALUE,
+                dst_nodata=NO_DATA_VALUE
+            )
+            dst.write(destination_array.astype(rasterio.float32), 1)
 
 print("SNC resampling complete!")
