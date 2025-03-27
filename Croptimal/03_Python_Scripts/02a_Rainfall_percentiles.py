@@ -19,12 +19,25 @@ This script calculates rainfall percentiles by:
 ####################################################################################################
 ########################## Define directories and file paths #######################################
 ####################################################################################################
-# Define constants (in UPPERCASE)
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+
+# Define constants
 RES = 250  # Resolution in meters
 P_PERC = [0.05, 0.25]  # Percentiles to calculate (5% and 25%)
+NO_DATA_VALUE = -9999.0  # No data value
 
 # Get input rainfall files
 input_files = glob.glob(os.path.join(
@@ -38,24 +51,25 @@ print(f"Found {len(input_files)} rainfall files")
 # Extract month numbers from filenames
 months_stack = [int(os.path.basename(file)[5:7]) for file in input_files]
 
-# Load province shapefile
-print("Loading province shapefile...")
-province_shp_path = os.path.join(DATA_DIR, f"{PROVINCE_NAME}.shp")
-province_shp = gpd.read_file(province_shp_path)
-
-# Create a buffer around province shapefile
-print("Creating buffer around province...")
-province_buffer = province_shp.buffer(0.25)  # Buffer of 0.25 degrees
 
 # Load reference DEM
 print("Loading reference DEM...")
 dem_path = os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
 with rasterio.open(dem_path) as dem_src:
-    dem_meta = dem_src.meta.copy()
-    dem_transform = dem_src.transform
-    dem_crs = dem_src.crs
-    dem_shape = (dem_src.height, dem_src.width)
+    DEM_META = dem_src.meta.copy()
+    DEM_TRANSFORM = dem_src.transform
+    DEM_CRS = dem_src.crs
+    DEM_SHAPE = (dem_src.height, dem_src.width)
+    DEM_PROFILE = dem_src.profile
+
+# Load province shapefile
+print("Loading province shapefile...")
+provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+provinces_shp = gpd.read_file(provinces_filepath)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
+province_shp_sel_reproj = province_shp_sel.to_crs(DEM_CRS)
+province_buffer = province_shp_sel.buffer(500)  # Buffer of 0.25 degrees
 
 ####################################################################################################
 ########################## Process each percentile ################################################
@@ -64,9 +78,9 @@ with rasterio.open(dem_path) as dem_src:
 for p_p in P_PERC:
     # Generate directory name by removing decimal point from percentile value
     p_str = str(p_p).replace(".", "")
-    new_dir = os.path.join(RESULTS_DIR, PROVINCE_NAME,
-                           "Rainfall", f"{p_str}perc")
-    os.makedirs(new_dir, exist_ok=True)
+    new_results_subdir = os.path.join(RESULTS_DIR,
+                                      "Rainfall", "Percentiles", f"{p_str}perc")
+    os.makedirs(new_results_subdir, exist_ok=True)
 
     print(f"Processing {p_p*100}% percentile...")
 
@@ -100,7 +114,6 @@ for p_p in P_PERC:
                 month_data.append(src.read(1))
 
         # Calculate the percentile for this month across all years
-        # This is equivalent to R's calc function with quantile
         if month_data:
             # Stack all data for this month
             stacked_data = np.stack(month_data)
@@ -117,77 +130,70 @@ for p_p in P_PERC:
     # Create a profile for temporary files
     temp_profile = month_profile.copy()
 
-    # List to store cropped data
-    cropped_layers = {}
-
-    # Process each month
-    for month, data in out_layers.items():
-        # Create a temporary raster file for cropping
-        temp_path = os.path.join(new_dir, f"temp_month_{month}.tif")
-
-        with rasterio.open(temp_path, 'w', **temp_profile) as dst:
-            dst.write(data.astype(rasterio.float32), 1)
-
-        # Crop to province boundary
-        with rasterio.open(temp_path) as src:
-            # Ensure CRS compatibility
-            if src.crs != province_shp.crs:
-                province_buffer_projected = province_buffer.to_crs(src.crs)
-            else:
-                province_buffer_projected = province_buffer
-
-            out_image, out_transform = mask(
-                src, province_buffer_projected.geometry, crop=True)
-            out_meta = src.meta.copy()
-            out_meta.update({
-                "driver": "GTiff",
-                "height": out_image.shape[1],
-                "width": out_image.shape[2],
-                "transform": out_transform,
-            })
-
-            # Store the cropped data
-            cropped_layers[month] = {
-                'data': out_image[0],
-                'transform': out_transform,
-                'meta': out_meta
-            }
-
-        # Clean up temporary file
-        try:
-            os.remove(temp_path)
-        except:
-            print(f"  Warning: Could not remove temporary file {temp_path}")
-
-    # Resample each cropped percentile raster to match DEM
-    print("  Resampling to match DEM...")
-
     # Month abbreviations for naming output files
     month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
 
     # Process each month
-    for month, layer in cropped_layers.items():
-        # Create an output array for the resampled data
-        resampled_data = np.zeros(dem_shape, dtype=np.float32)
+    for month, data in out_layers.items():
+        # Create a temporary raster file for cropping
+        temp_path = os.path.join(TEMP_DIR, f"temp_rainfall_sum_{month}.tif")
 
-        # Reproject the data to match the DEM
-        reproject(
-            source=layer['data'],
-            destination=resampled_data,
-            src_transform=layer['transform'],
-            src_crs=month_crs,  # Assuming all monthly rasters have the same CRS
-            dst_transform=dem_transform,
-            dst_crs=dem_crs,
-            resampling=Resampling.bilinear
-        )
+        # Write the data to the temporary file
+        with rasterio.open(temp_path, 'w', **temp_profile) as dst:
+            dst.write(data.astype(rasterio.float32), 1)
 
-        # Write the result to a file
-        # Use month abbreviation for the filename
-        output_path = os.path.join(new_dir, f"{month_abbrs[month-1]}.tif")
+        # Open temporary file for resampling and cropping
+        with rasterio.open(temp_path) as src:
+            temp_data = src.read(1)
+            temp_profile = src.profile
 
-        with rasterio.open(output_path, 'w', **dem_meta) as dst:
-            dst.write(resampled_data.astype(rasterio.float32), 1)
+            # Create an output array for the resampled data
+            resampled_data = np.full(
+                DEM_SHAPE, NO_DATA_VALUE, dtype=np.float32)
 
-        print(f"  Saved {month_abbrs[month-1]} for {p_p*100}% percentile")
+            # Reproject and resample the data to match the DEM
+            reproject(
+                source=temp_data,
+                destination=resampled_data,
+                src_transform=src.transform,
+                src_crs=src.crs,  # Assuming all monthly rasters have the same CRS
+                dst_transform=DEM_TRANSFORM,
+                dst_crs=DEM_CRS,
+                resampling=Resampling.bilinear
+            )
+
+            # Create a memory file with the reprojected data for masking
+            with rasterio.MemoryFile() as memfile:
+                with memfile.open(**DEM_PROFILE) as temp_dst:
+                    temp_dst.write(resampled_data, 1)
+
+                    # Ensure CRS compatibility
+                    province_shp_proj = province_shp_sel_reproj.to_crs(DEM_CRS)
+
+                    # Mask the data to the province boundary
+                    masked_data, masked_transform = mask(
+                        temp_dst,
+                        province_shp_proj.geometry,
+                        crop=True,
+                        nodata=NO_DATA_VALUE)
+
+                    # Save mask profile
+                    masked_profile = temp_dst.profile.copy()
+                    masked_profile.update({
+                        "height": masked_data.shape[1],
+                        "width": masked_data.shape[2],
+                        "transform": masked_transform,
+                    })
+
+            # Save the masked data to a new file
+            output_path = os.path.join(
+                new_results_subdir, f"rainfall_{p_str}perc_{month_abbrs[month-1]}.tif")
+            with rasterio.open(output_path, 'w', **masked_profile) as dst:
+                dst.write(masked_data.astype(rasterio.float32))
+
+            print(f"  Saved {month_abbrs[month-1]} for {p_p*100}% percentile")
+
+            # Clean up temporary file
+            os.remove(temp_path)
 
 print("Rainfall percentiles processing complete!")
