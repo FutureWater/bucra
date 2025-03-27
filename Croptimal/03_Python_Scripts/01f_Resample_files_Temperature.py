@@ -6,8 +6,10 @@ import numpy as np
 import netCDF4 as nc
 import xarray as xr
 import geopandas as gpd
-from rasterio.warp import reproject, Resampling
+from rasterio.warp import reproject, Resampling, calculate_default_transform
 from rasterio.mask import mask
+from rasterio.transform import from_origin, array_bounds
+import matplotlib.pyplot as plt
 
 """
 This script processes temperature data files by:
@@ -22,14 +24,26 @@ This script processes temperature data files by:
 ####################################################################################################
 ########################## Define directories and file paths #######################################
 ####################################################################################################
-# Define directories and file paths (only true constants in UPPERCASE)
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
-RES = 250  # Resolution in meters
-LOCAL_PROJ = "EPSG:32733"  # Local projection
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
 # Temperature variables and parameters
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
+LOCAL_PROJ = "EPSG:32733"  # Local projection
+SRC_CRS = "EPSG:4326"  # Projection from NetCDF files: WGS84 projection
 T_VARS = ["tavg", "tmin", "tmax"]  # Temperature variables to process
 T_LAPSE_RATE = -0.0065  # Temperature lapse rate (°C/m)
 
@@ -38,23 +52,29 @@ month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
 
 # Load province shapefile
 print("Loading province shapefile...")
-province_shp_path = os.path.join(DATA_DIR, f"{PROVINCE_NAME}.shp")
-province_shp = gpd.read_file(province_shp_path)
+provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+provinces_shp = gpd.read_file(provinces_filepath)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 
-# Create a buffer around province shapefile (equivalent to gBuffer in R)
-print("Creating buffer around province...")
-province_buffer = province_shp.buffer(0.25)  # Buffer of 0.25 degrees
 
 # Load reference DEM
 print("Loading reference DEM...")
-dem_path = os.path.join(RESULTS_DIR, PROVINCE_NAME, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
+dem_path = os.path.join(RESULTS_DIR, "DEM",
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Used to be "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+
 with rasterio.open(dem_path) as dem_src:
-    dem_data = dem_src.read(1)
-    dem_meta = dem_src.meta.copy()
-    dem_transform = dem_src.transform
-    dem_crs = dem_src.crs
-    dem_shape = (dem_src.height, dem_src.width)
+    DEM_DATA = dem_src.read(1)
+    DEM_META = dem_src.meta.copy()
+    DEM_TRANSFORM = dem_src.transform
+    DEM_CRS = dem_src.crs
+    DEM_SHAPE = (dem_src.height, dem_src.width)
+    DEM_PROFILE = dem_src.profile
+
+# Change the CRS of the province shapefile to match the DEM and create buffer
+print("Creating buffer around province...")
+province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
+province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
+
 
 ####################################################################################################
 ################################# Process temperature variables ###################################
@@ -63,7 +83,7 @@ with rasterio.open(dem_path) as dem_src:
 for var in T_VARS:
     print(f"Processing {var} temperature data...")
 
-    # Get input files for this temperature variable
+    # Get input files for this temperature variable. Files are per year, with monthly temp data.
     input_files = glob.glob(os.path.join(DATA_DIR, "Temperature", var, "*.nc"))
 
     if not input_files:
@@ -71,16 +91,11 @@ for var in T_VARS:
         continue
 
     # Create output directory
-    new_dir = os.path.join(RESULTS_DIR, PROVINCE_NAME,
-                           "Temperature", var, "Monthly_Mean")
-    os.makedirs(new_dir, exist_ok=True)
+    var_results_subdir = os.path.join(RESULTS_DIR,
+                                      "Temperature", var, "Monthly_Mean")
+    os.makedirs(var_results_subdir, exist_ok=True)
 
-    # Read and process NetCDF data
-    # Note: This is a simplified approach to replicate R's stack() and stackApply()
-    # functions. The exact implementation depends on the structure of your NetCDF files.
-    print(f"  Reading NetCDF files for {var}...")
-
-    # We'll use xarray which is well-suited for NetCDF data
+    # Read and process NetCDF data.
     datasets = []
     for file in input_files:
         with xr.open_dataset(file) as ds:
@@ -90,101 +105,111 @@ for var in T_VARS:
     combined_data = xr.concat(datasets, dim="time")
 
     # Group by month and calculate mean for each month
-    # This replicates the stackApply function in R
-    print(f"  Calculating monthly means for {var}...")
     monthly_means = combined_data.groupby('time.month').mean(dim='time')
 
     # Process each month
-    for month_idx in range(1, 13):
+    for month_idx in range(1, 2):
         month_name = month_abbrs[month_idx - 1]
-        print(f"Processing {month_name}...")
-
-        # Extract data for this month
-        try:
-            # Get the temperature variable (assumes the main variable has the same name as var)
-            month_data = monthly_means[var].sel(month=month_idx).values
-        except:
-            print(
-                f"    Warning: Could not extract {month_name} data. Check variable names in NetCDF.")
-            continue
+        month_data = monthly_means['t2m'].sel(month=month_idx).values
 
         # Create a temporary raster file for cropping and reprojection
-        temp_path = os.path.join(new_dir, f"temp_{month_name}.tif")
+        temp_path = os.path.join(TEMP_DIR, f"temp_{var}_{month_name}.tif")
 
-        # Get the transform and CRS information from the first file
         # Note: This assumes all files have the same geospatial reference
         with xr.open_dataset(input_files[0]) as ds:
             # Create a profile for the raster
             # Note: This part may need adjustment based on your NetCDF structure
-            temp_profile = {
-                'driver': 'GTiff',
-                'height': month_data.shape[0],
-                'width': month_data.shape[1],
-                'count': 1,
-                'dtype': rasterio.float32,
-                'crs': ds.rio.crs,
-                'transform': ds.rio.transform()
-            }
+            lon = ds['longitude']
+            lat = ds['latitude']
+            ds_transform = from_origin(lon.min(), lat.max(),
+                                       abs(lon[1]-lon[0]), abs(lat[1]-lat[0]))
+        temp_profile = {
+            'driver': 'GTiff',
+            'height': month_data.shape[0],
+            'width': month_data.shape[1],
+            'count': 1,
+            'dtype': month_data.dtype,
+            'crs': SRC_CRS,
+            # 'transform': ds.rio.transform()
+            'transform': ds_transform
+        }
 
         # Write to temporary file
         with rasterio.open(temp_path, 'w', **temp_profile) as dst:
             dst.write(month_data.astype(rasterio.float32), 1)
 
         # Crop raster to the buffered province boundary
-        print(f"    Cropping {month_name} to province boundary...")
+        print(f"    Cropping {month_name} to {PROVINCE_NAME} boundary...")
         with rasterio.open(temp_path) as src:
-            # Ensure CRS compatibility
-            if src.crs != province_shp.crs:
-                province_buffer_projected = province_buffer.to_crs(src.crs)
-            else:
-                province_buffer_projected = province_buffer
+            temp_data = src.read(1)
+            temp_profile = src.profile
 
-            out_image, out_transform = mask(
-                src, province_buffer_projected.geometry, crop=True)
-            out_meta = src.meta.copy()
-            out_meta.update({
-                "driver": "GTiff",
-                "height": out_image.shape[1],
-                "width": out_image.shape[2],
-                "transform": out_transform,
-            })
-
-        # Save cropped data to another temporary file
-        cropped_path = os.path.join(new_dir, f"cropped_{month_name}.tif")
-        with rasterio.open(cropped_path, 'w', **out_meta) as dst:
-            dst.write(out_image[0], 1)
-
-        # Resample to match DEM resolution and extent
-        print(f"    Resampling {month_name} to match DEM...")
-        resampled_data = np.zeros(dem_shape, dtype=np.float32)
-
-        with rasterio.open(cropped_path) as src:
-            reproject(
-                source=rasterio.band(src, 1),
-                destination=resampled_data,
-                src_transform=src.transform,
-                src_crs=src.crs,
-                dst_transform=dem_transform,
-                dst_crs=dem_crs,
-                resampling=Resampling.bilinear
+            # Create destination transform for resampled raster
+            dst_transform, dst_width, dst_height = calculate_default_transform(  # Takes as input: src_crs, dst_crs, src_width, src_height, src_left, src_bottom, src_right, src_top, resolution
+                src.crs, DEM_CRS, src.width, src.height,
+                # Calculate bounds (top, bottom, left, right) of the source array
+                *src.bounds,
+                resolution=RES
             )
 
-        # Apply lapse rate correction based on elevation difference
-        # This is the equivalent of: final_ras <- resampled_var_ras + resampled_dem_diff_ras*T_lapse_rate
-        print(f"    Applying lapse rate correction for {month_name}...")
-        final_data = resampled_data + dem_data * T_LAPSE_RATE
+            # Set profile for output raster
+            dst_profile = temp_profile.copy()
+            dst_profile.update({
+                'crs': DEM_CRS,
+                'transform': DEM_TRANSFORM,
+                'width': DEM_SHAPE[1],
+                'height': DEM_SHAPE[0],
+                'nodata': NO_DATA_VALUE  # Set a nodata value
+            })
 
-        # Save final temperature raster
-        output_path = os.path.join(new_dir, f"{month_name}.tiff")
-        with rasterio.open(output_path, 'w', **dem_meta) as dst:
-            dst.write(final_data.astype(rasterio.float32), 1)
+            # Create empty destination array
+            destination_array = np.full(
+                (DEM_SHAPE[0], DEM_SHAPE[1]), NO_DATA_VALUE, dtype=temp_data.dtype)
 
-        # Clean up temporary files
-        try:
-            os.remove(temp_path)
-            os.remove(cropped_path)
-        except Exception as e:
-            print(f"    Warning: Could not remove temporary files: {e}")
+            # Resample to match DEM resolution.
+            reproject(
+                source=temp_data,
+                destination=destination_array,
+                src_transform=src.transform,
+                src_crs=SRC_CRS,
+                dst_transform=dst_transform,
+                dst_crs=DEM_CRS,
+                resampling=Resampling.bilinear,
+                src_nodata=NO_DATA_VALUE,
+                dst_nodata=NO_DATA_VALUE
+            )
+
+            # Create a memory file with the reprojected data for masking
+            with rasterio.MemoryFile() as memfile:
+                with memfile.open(**dst_profile) as temp_dst:
+                    temp_dst.write(destination_array, 1)
+
+                    # Perform the masking operation
+                    masked_data, masked_transform = mask(
+                        temp_dst,
+                        province_shp_proj.geometry,
+                        crop=True,
+                        nodata=NO_DATA_VALUE
+                    )
+
+                    # Update profile for the masked result
+                    masked_profile = temp_dst.profile.copy()
+                    masked_profile.update({
+                        'height': masked_data.shape[1],
+                        'width': masked_data.shape[2],
+                        'transform': masked_transform,
+                    })
+
+            # Apply lapse rate correction based on elevation difference
+            final_data = masked_data + DEM_DATA * T_LAPSE_RATE
+
+            # Save final temperature raster
+            output_path = os.path.join(
+                var_results_subdir, f"{var}_{month_name}.tiff")
+            with rasterio.open(output_path, 'w', **masked_profile) as dst:
+                dst.write(final_data)
+
+        os.remove(temp_path)
 
     print(f"Completed processing {var} temperature data")
 
