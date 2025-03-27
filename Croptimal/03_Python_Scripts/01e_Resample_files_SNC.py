@@ -62,11 +62,7 @@ VAR_NAMES_2 = [name.replace("af", f"{PROVINCE_NAME}_") for name in VAR_NAMES]
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-province_shp_proj = province_shp_sel.to_crs(LOCAL_PROJ)
 
-# Create a buffer around province shapefile
-print("Creating buffer around province...")
-province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
 
 # Load reference DEM
 print("Loading reference DEM...")
@@ -76,62 +72,67 @@ with rasterio.open(DEM_PATH) as dem_src:
     DEM_META = dem_src.meta.copy()
     DEM_TRANSFORM = dem_src.transform
     DEM_CRS = dem_src.crs
-    DEM_SHAPE = (dem_src.height, dem_src.width)
+    DEM_HEIGHT = dem_src.height
+    DEM_WIDTH = dem_src.width
+    DEM_PROFILE = dem_src.profile
+
+# Set province boundary to DEM crs and create a buffer
+print("Creating buffer around province...")
+province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
+province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
+
 
 # Process each SNC file
-for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
+for i, (input_file, output_name) in enumerate(zip(INPUT_FILES[:1], VAR_NAMES_2[:1])):
     print(
         f"Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
 
     # Read input file
     with rasterio.open(input_file) as src:
-        # Ensure CRS compatibility
-        if src.crs != province_shp_proj.crs:
-            province_buffer_projected = province_buffer.to_crs(src.crs)
-        else:
-            province_buffer_projected = province_buffer
-
-        # Crop raster to the buffered province boundary
-        print("Cropping to province boundary...")
-        out_image, out_transform = mask(
-            src, province_buffer_projected.geometry, crop=True, nodata=NO_DATA_VALUE)
-
-        # Save metadata of raster
-        out_meta = src.meta.copy()
-
-        # Get transform and shape new raster converted to local projection
-        dst_transform, dst_width, dst_height = calculate_default_transform(
-            src.crs, DEM_CRS, src.width, src.height,
-            *rasterio.transform.array_bounds(out_image.shape[1], out_image.shape[2], out_transform),
-            resolution=RES
-        )
+        temp_data = src.read(1)
+        temp_profile = src.profile
 
         # Resample to match DEM resolution and extent
         print("  Resampling to match DEM...")
-        destination_array = np.full(DEM_SHAPE, NO_DATA_VALUE, dtype=np.float32)
+        destination_array = np.full(
+            (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=np.float32)
 
-        out_meta.update({
-            "crs": DEM_CRS,
-            "transform": dst_transform,
-            "width": dst_width,
-            "height": dst_height,
-            "nodata": NO_DATA_VALUE
-        })
+        reproject(
+            source=temp_data,
+            destination=destination_array,
+            src_transform=src.transform,
+            src_crs=src.crs,
+            dst_transform=DEM_TRANSFORM,
+            dst_crs=DEM_CRS,
+            resampling=Resampling.bilinear,
+            src_nodata=NO_DATA_VALUE,
+            dst_nodata=NO_DATA_VALUE
+        )
 
+        # Create a memory file with the reprojected data for masking
+        with rasterio.MemoryFile() as memfile:
+            with memfile.open(**DEM_PROFILE) as temp_dst:
+                temp_dst.write(destination_array, 1)
+
+                # Perform the masking operation
+                masked_data, masked_transform = mask(
+                    temp_dst,
+                    province_shp_proj.geometry,
+                    crop=True,
+                    nodata=NO_DATA_VALUE
+                )
+
+                # Update profile for the masked result
+                masked_profile = temp_dst.profile.copy()
+                masked_profile.update({
+                    'height': masked_data.shape[1],
+                    'width': masked_data.shape[2],
+                    'transform': masked_transform,
+                })
+
+        # Write the final masked result to file
         OUTPUT_PATH = os.path.join(SNC_RESULTS_DIR, output_name)
-
-        with rasterio.open(OUTPUT_PATH, 'w', **out_meta) as dst:
-            reproject(
-                source=out_image[0],
-                destination=destination_array,
-                src_transform=out_transform,
-                src_crs=src.crs,
-                dst_transform=DEM_TRANSFORM,
-                dst_crs=DEM_CRS,
-                resampling=Resampling.bilinear,
-                src_nodata=NO_DATA_VALUE,
-                dst_nodata=NO_DATA_VALUE
-            )
-            dst.write(destination_array.astype(rasterio.float32), 1)
+        with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
+            dst.write(masked_data.astype(rasterio.float32))
 
 print("SNC resampling complete!")
