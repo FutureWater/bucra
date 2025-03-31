@@ -4,7 +4,8 @@ import rasterio
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from rasterstats import zonal_stats
+from rasterio.mask import mask
+import rioxarray
 
 """
 This script calculates average temperature and rainfall values per commune by:
@@ -12,106 +13,99 @@ This script calculates average temperature and rainfall values per commune by:
 2. Extracting mean values for each commune using zonal statistics
 3. Saving results to CSV files organized by variable type
 """
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
-# Define directories and paths (constants)
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
-# Create output directories
-new_dir_t = os.path.join(RESULTS_DIR, "_LS_Results", "Temperature")
-new_dir_p = os.path.join(RESULTS_DIR, "_LS_Results", "Rainfall")
-os.makedirs(new_dir_t, exist_ok=True)
-os.makedirs(new_dir_p, exist_ok=True)
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+LOCAL_PROJECTION = "EPSG:4326"
+
+
+# Define constants
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
 
 # Get temperature files
 t_avg_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Temperature", "tavg", "*.tif"))
+    RESULTS_DIR, "Temperature", "tavg", "*.tif"))
 t_max_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Temperature", "tmax", "*.tif"))
+    RESULTS_DIR, "Temperature", "tmax", "*.tif"))
 t_min_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Temperature", "tmin", "*.tif"))
+    RESULTS_DIR, "Temperature", "tmin", "*.tif"))
 t_files_all = t_avg_files + t_max_files + t_min_files
 
 # Get rainfall files
 p_avg_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Rainfall", "005perc", "*.tif"))
+    RESULTS_DIR, "Rainfall", "005perc", "*.tif"))
 p_max_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Rainfall", "025perc", "*.tif"))
+    RESULTS_DIR, "Rainfall", "025perc", "*.tif"))
 p_min_files = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Rainfall", "Mean_Monthly", "*.tif"))
+    RESULTS_DIR, "Rainfall", "Mean_Monthly", "*.tif"))
 p_files_all = p_avg_files + p_max_files + p_min_files
 
-# Load communes shapefile
-# Note: In the R script, there's a filtering on communes_df$Province == province_name
-# Here we assume communes shapefile already contains only the relevant communes
-communes_shp_path = os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Shapefiles", f"{PROVINCE_NAME}.shp")
-communes_shp = gpd.read_file(communes_shp_path)
-
-# Process temperature files
+var_dict = {"Temperature": t_files_all, "Precipitation": p_files_all}
 
 
-def process_files(file_list, output_path, variable_type):
-    """Process raster files and extract zonal statistics for each commune"""
+# Load commune shapefile
+print("Loading province shapefile...")
+commune_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
+commune_shp = gpd.read_file(commune_filepath)
+commune_shp_sel = commune_shp[commune_shp["NAME_3"] == PROVINCE_NAME]
+commune_shp_sel_reproj = commune_shp_sel.to_crs(LOCAL_PROJECTION)
+
+# Process each variable
+for var, file_list in var_dict.items():
+    """Process raster files and extract mean values for each commune"""
+    # Create empty dictionary for results, to be converted to pandas df
     results = {}
-    # Assuming NAME_3 field exists
-    commune_names = communes_shp['NAME_3'].tolist()
 
-    # Initialize empty dataframe with communes as rows
+    # Create subdirectory for new results
+    new_results_subdir = os.path.join(RESULTS_DIR, "_LS_Results", var)
+    os.makedirs(new_results_subdir, exist_ok=True)
+
+    # Get list of commune_names in province.
+    commune_names = commune_shp_sel['NAME_3'].tolist()
+
+    # Initialize empty dictionary with communes as keys and a dictionary as value.
     for commune in commune_names:
         results[commune] = {}
 
-    # Process each file
+    # Process each min, max and avg monthly file
     for i, file_path in enumerate(file_list):
         print(f"Processing file {i+1} of {len(file_list)}")
 
-        # Extract file information for naming
-        if variable_type == "temperature":
-            var_type = os.path.basename(
-                os.path.dirname(os.path.dirname(file_path)))
-            percentile = os.path.basename(os.path.dirname(file_path))
-        else:  # rainfall
-            var_type = "P"
-            percentile = os.path.basename(os.path.dirname(file_path))
-
-        # Get month from filename (first 3 characters)
+        # Get variable type, percentile and month abbreviatons and create a column name out  of it.
+        var_type = os.path.basename(
+            os.path.dirname(os.path.dirname(file_path)))
+        # gets percentile or monthly mean as string
+        percentile = os.path.basename(os.path.dirname(file_path))
         month = os.path.basename(file_path)[:3]
         column_name = f"{var_type}_{percentile}_{month}"
 
-        # Calculate zonal statistics for each commune
-        stats = zonal_stats(
-            communes_shp,
-            file_path,
-            stats="mean",
-            geojson_out=True
-        )
+        # Calculate mean value of raster
+        with rioxarray.open_rasterio(file_path) as raster:
+            for idx, row in commune_shp_sel_reproj.iterrows():
+                commune_name = row['NAME_3']
 
-        # Extract results
-        for idx, stat in enumerate(stats):
-            commune_name = communes_shp.iloc[idx]['NAME_3']
-            mean_value = stat['properties']['mean']
-            results[commune_name][column_name] = mean_value
+                # Clip raster to commune geometry and calculate mean
+                clipped = raster.rio.clip([row.geometry], drop=False)
+                mean_value = float(clipped.mean())
+                results[commune_name][column_name] = mean_value
 
-    # Convert to dataframe and save
-    df_results = pd.DataFrame.from_dict(results, orient='index')
-    df_results.to_csv(output_path, index=True)
+            # Convert to dataframe and save
+            output_path = os.path.join(
+                new_results_subdir, f"Average_{var}_per_Commune_of_{PROVINCE_NAME}.csv")
+            df_results = pd.DataFrame.from_dict(results, orient='index')
+            df_results.to_csv(output_path, index=True)
 
-
-# Process temperature data
-process_files(
-    t_files_all,
-    os.path.join(
-        new_dir_t, f"Average_Temperature_per_Commune_{PROVINCE_NAME}.csv"),
-    "temperature"
-)
-
-# Process rainfall data
-process_files(
-    p_files_all,
-    os.path.join(
-        new_dir_p, f"Average_Rainfall_per_Commune_{PROVINCE_NAME}.csv"),
-    "rainfall"
-)
 
 print(f"Processing complete for {PROVINCE_NAME}")
