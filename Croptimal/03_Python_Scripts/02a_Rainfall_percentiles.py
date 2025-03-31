@@ -167,13 +167,10 @@ for p_p in P_PERC:
                 with memfile.open(**DEM_PROFILE) as temp_dst:
                     temp_dst.write(resampled_data, 1)
 
-                    # Ensure CRS compatibility
-                    province_shp_proj = province_shp_sel_reproj.to_crs(DEM_CRS)
-
                     # Mask the data to the province boundary
                     masked_data, masked_transform = mask(
                         temp_dst,
-                        province_shp_proj.geometry,
+                        province_shp_sel_reproj.geometry,
                         crop=True,
                         nodata=NO_DATA_VALUE)
 

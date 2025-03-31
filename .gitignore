@@ -5,6 +5,7 @@
 # Specific folders
 Croptimal/01_Data/
 Croptimal/02_GIS/
+Croptimal/04_Results
 
 # Specific file types (examples)
 *.csv

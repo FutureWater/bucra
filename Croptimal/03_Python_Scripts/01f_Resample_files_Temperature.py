@@ -186,7 +186,7 @@ for var in T_VARS:
 
             # Save final temperature raster
             output_path = os.path.join(
-                var_results_subdir, f"{var}_{month_name}.tiff")
+                var_results_subdir, f"{var}_{month_name}.tif")
             with rasterio.open(output_path, 'w', **masked_profile) as dst:
                 dst.write(final_data)
 

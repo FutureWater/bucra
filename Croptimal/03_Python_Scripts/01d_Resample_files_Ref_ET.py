@@ -58,13 +58,12 @@ MULTIPLIER = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
 
 
 # Open NetCDF file and calculate monthly means
-ds = xr.open_dataset(INPUT_FILES[0])       # Open Dataset
-time_coord = ds['time']
-ref_et = ds['PMMT']
-lon = ds['lon']
-lat = ds['lat']
-monthly_mean = ref_et.groupby(time_coord.dt.month).mean(dim='time')
-ds.close()                                          # Close datasets
+with xr.open_dataset(INPUT_FILES[0]) as ds:
+    time_coord = ds['time']
+    ref_et = ds['PMMT']
+    lon = ds['lon']
+    lat = ds['lat']
+    monthly_mean = ref_et.groupby(time_coord.dt.month).mean(dim='time')
 
 
 # Read resampled DEM raster and get profile
