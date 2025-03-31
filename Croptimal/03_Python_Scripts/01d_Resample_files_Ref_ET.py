@@ -82,7 +82,7 @@ with rasterio.open(DEM_PATH) as dem_src:
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
+province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
 
 ####################################################################################################
@@ -149,7 +149,7 @@ for i, month in enumerate(MONTH_ABBRS):
                 # Perform the masking operation
                 masked_data, masked_transform = mask(
                     temp_dst,
-                    province_shp_proj.geometry,
+                    province_shp_reproj.geometry,
                     crop=True,
                     nodata=NO_DATA_VALUE
                 )
@@ -167,7 +167,11 @@ for i, month in enumerate(MONTH_ABBRS):
         with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
             dst.write(masked_data)
 
-    os.remove(temp_path)
+    # Clean up temporary files
+    try:
+        os.remove(temp_path)
+    except Exception as e:
+        print(f"  Warning: Could not remove temporary files: {e}")
 
 # Show final ET raster
 # with rasterio.open(output_path) as src:

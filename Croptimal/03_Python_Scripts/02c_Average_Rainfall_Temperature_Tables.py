@@ -27,7 +27,7 @@ DATA_DIR = os.path.join(angola_wd, "01_Data")
 GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
-LOCAL_PROJECTION = "EPSG:4326"
+LOCAL_PROJECTION = "EPSG:32733"
 
 
 # Define constants
