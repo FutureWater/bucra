@@ -38,7 +38,10 @@ GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+
+# Set constants
 RES = 250  # Set resolution
+NO_DATA_VALUE = -9999.0
 
 # Create output directory for processed rainfall data
 RESULTS_RAINFALL_DIR = os.path.join(RESULTS_DIR, "Rainfall", "Mean_Monthly")
@@ -122,22 +125,17 @@ print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
                         f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
 with rasterio.open(DEM_PATH) as dem_src:
-    DEM_META = dem_src.meta.copy()
     DEM_TRANSFORM = dem_src.transform
     DEM_CRS = dem_src.crs
-    DEM_SHAPE = (dem_src.height, dem_src.width)
+    DEM_HEIGHT = dem_src.height
+    DEM_WIDTH = dem_src.width
+    DEM_PROFILE = dem_src.profile
 
-# Load province shapefile: (EPSG:4326)
+# Load province shapefile (EPSG:4326) and reproject
 print("Loading province shapefile...")
 provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-
-# Reproject to match DEM and have CRS with units in meters. CRS: (EPSG:32733)
-province_shp_sel = province_shp_sel.to_crs(DEM_CRS)
-
-# Create a buffer around province shapefile
-print("Creating buffer around province...")
-province_buffer = province_shp_sel.buffer(500)  # Buffer of 500
+province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
 # List of month abbreviations (equivalent to month.abb in R)
 MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
@@ -156,58 +154,56 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     with rasterio.open(TEMP_RASTER_PATH, 'w', **month_profile) as temp:
         temp.write(month_data, 1)
 
-    # Crop raster to the buffered province boundary
-    print(f"  Cropping {month_name} to province boundary.")
     with rasterio.open(TEMP_RASTER_PATH) as src:
-        # Ensure CRS province buffer and rainfall raster match: (EPSG:4326)
-        if src.crs != province_buffer.crs:
-            PROVINCE_BUFFER_PROJECTED = province_buffer.to_crs(src.crs)
-        else:
-            PROVINCE_BUFFER_PROJECTED = province_buffer
+        temp_data = src.read(1)
+        temp_profile = src.profile
 
-        # Crop raster with correct metadata
-        out_image, out_transform = mask(
-            src, PROVINCE_BUFFER_PROJECTED.geometry, crop=True)
-        out_meta = src.meta.copy()
-        out_meta.update({
-            "driver": "GTiff",
-            "height": out_image.shape[1],
-            "width": out_image.shape[2],
-            "transform": out_transform,
-        })
+    # Create empty destination array
+    destination_array = np.full(
+        (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=temp_data.dtype)
 
-    # Resample to match DEM resolution and extent
-    print(f"  Resampling {month_name}...")
-    resampled_data = np.zeros(DEM_SHAPE, dtype=month_data.dtype)
+    # Reproject and write
+    reproject(
+        source=temp_data,
+        destination=destination_array,
+        src_transform=src.transform,
+        src_crs=src.crs,
+        dst_transform=DEM_TRANSFORM,
+        dst_crs=DEM_CRS,
+        resampling=Resampling.bilinear,
+        src_nodata=NO_DATA_VALUE,
+        dst_nodata=NO_DATA_VALUE
+    )
 
-    # Create another temporary file for the cropped data
-    TEMP_CROPPED_PATH = os.path.join(
-        TEMP_DIR, f"cropped_temp_{month_name}.tif")
-    with rasterio.open(TEMP_CROPPED_PATH, 'w', **out_meta) as temp:
-        temp.write(out_image[0], 1)
+    # Create a memory file with the reprojected data for masking
+    with rasterio.MemoryFile() as memfile:
+        with memfile.open(**DEM_PROFILE) as temp_dst:
+            temp_dst.write(destination_array, 1)
 
-    # Now resample from the cropped temp file to match DEM crs and resolution
-    with rasterio.open(TEMP_CROPPED_PATH) as src:
-        reproject(
-            source=rasterio.band(src, 1),
-            destination=resampled_data,
-            src_transform=src.transform,
-            src_crs=src.crs,
-            dst_transform=DEM_TRANSFORM,
-            dst_crs=DEM_CRS,
-            resampling=Resampling.bilinear
-        )
+            # Perform the masking operation
+            masked_data, masked_transform = mask(
+                temp_dst,
+                province_shp_reproj.geometry,
+                crop=True,
+                nodata=NO_DATA_VALUE
+            )
+
+            # Update profile for the masked result
+            masked_profile = temp_dst.profile.copy()
+            masked_profile.update({
+                'height': masked_data.shape[1],
+                'width': masked_data.shape[2],
+                'transform': masked_transform,
+            })
 
     # Save the final resampled file
     OUTPUT_PATH = os.path.join(RESULTS_RAINFALL_DIR, f"{month_name}.tif")
-    out_meta = DEM_META.copy()
-    with rasterio.open(OUTPUT_PATH, 'w', **out_meta) as dst:
-        dst.write(resampled_data, 1)
+    with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
+        dst.write(masked_data)
 
     # Clean up temporary files
     try:
         os.remove(TEMP_RASTER_PATH)
-        os.remove(TEMP_CROPPED_PATH)
     except Exception as e:
         print(f"  Warning: Could not remove temporary files: {e}")
 
