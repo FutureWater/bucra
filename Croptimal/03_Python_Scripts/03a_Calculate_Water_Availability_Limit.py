@@ -1,10 +1,14 @@
 import os
 import glob
+from pathlib import Path
 import calendar
 import rasterio
 import numpy as np
+import pandas as pd
 from rasterio.merge import merge
-from pathlib import Path
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 
 """
 This script calculates water availability indices for different crops by:
@@ -15,36 +19,43 @@ This script calculates water availability indices for different crops by:
 Kc values come from FAO: "Guidelines for computing crop water requirements - FAO Paper 56"
 """
 
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+LOCAL_PROJECTION = "EPSG:32733"
+
 # Define constants
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
 P_PERC = [0.05, 0.25]  # Percentiles to process
 
-# Create a mock cropping calendar (replace with actual data loading)
-# Structure needs: Crop, Start_growing_season, End_growing_season, Kc values for each month
-cropping_cal = [
-    {"Crop": "Wheat", "Start_growing_season": 11, "End_growing_season": 4,
-     "Kc_1": 0.3, "Kc_2": 0.3, "Kc_3": 0.3, "Kc_4": 0.4, "Kc_5": 0.8, "Kc_6": 0.3,
-     "Kc_7": 0.3, "Kc_8": 0.3, "Kc_9": 0.3, "Kc_10": 0.3, "Kc_11": 0.3, "Kc_12": 0.3},
-    # Add more crops as needed
-]
+# Load cropping calendar and parameters
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
+PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
-# Parameters dictionary (replace with actual data loading)
-params = {"Parameter": ["Water"], "Limit": [0.5]}
-
-# Get input files
-input_files_etc = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Ref_ET", "Mean_Monthly", "*.tif"))
-input_files_p = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Rainfall", "**", "*.tif"), recursive=True)
+# Get input filepaths
+INPUT_FILES_ETC = glob.glob(os.path.join(
+    RESULTS_DIR, "Ref_ET", "Mean_Monthly", "*.tif"))
+INPUT_FILES_P = glob.glob(os.path.join(
+    RESULTS_DIR, "Rainfall", "**", "*.tif"), recursive=True)
 
 # Create output directories
-new_dir = os.path.join(RESULTS_DIR, PROVINCE_NAME, "_LS_Results")
+NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR, "_LS_Results")
 for folder in ["Water", "ETc", "Rainfall"]:
-    os.makedirs(os.path.join(new_dir, folder), exist_ok=True)
+    os.makedirs(os.path.join(NEW_RESULTS_SUBDIR, folder), exist_ok=True)
 
-# Process each percentile (and mean)
+###################### Process each percentile and mean ######################
 for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
     # Handle percentile naming
     if p_val == "Mean_Monthly":
@@ -53,92 +64,153 @@ for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
         per = f"{str(p_val).replace('.', '')}perc"
 
     # Create subdirectories
-    os.makedirs(os.path.join(new_dir, "Rainfall", per), exist_ok=True)
-    os.makedirs(os.path.join(new_dir, "Water", per), exist_ok=True)
+    os.makedirs(os.path.join(NEW_RESULTS_SUBDIR,
+                "Rainfall", per), exist_ok=True)
+    os.makedirs(os.path.join(NEW_RESULTS_SUBDIR, "Water", per), exist_ok=True)
 
-    # Process each crop
-    for crop_data in cropping_cal:
+    ###################### Process each crop ######################
+    # (iterate over rows of cropping calendar)
+    for idx in CROPPING_CAL.index:
+        crop_data = CROPPING_CAL.loc[idx]
         crop_name = crop_data["Crop"]
         start_month = crop_data["Start_growing_season"]
         end_month = crop_data["End_growing_season"]
 
-        # Handle season that spans year boundary
+        # Create list of month numbers in the season, and use these to extract kc values from cropping calendar.
         if start_month > end_month:
+            # Handle seasons that cross year boundary.
             months = list(range(start_month, 13)) + \
                 list(range(1, end_month + 1))
-            kc = [crop_data[f"Kc_{m}"] for m in (
-                list(range(start_month, 13)) + list(range(1, end_month + 1)))]
+            kc = [float(crop_data[f"kc_{m}"]) for m in months]
+
         else:
             months = list(range(start_month, end_month + 1))
-            kc = [crop_data[f"Kc_{m}"]
+            kc = [float(crop_data[f"kc_{m}"])
                   for m in range(start_month, end_month + 1)]
 
-        # Get month abbreviations for filtering
+        # Get 3-letter month abbreviations for filtering file lists.
         month_abbrs = [calendar.month_abbr[m] for m in months]
 
-        # Find ET files for these months
+        # Find ET filepaths for these months
         et_files = []
         for month_abbr in month_abbrs:
             et_files.extend(
-                [f for f in input_files_etc if month_abbr in os.path.basename(f)])
+                [f for f in INPUT_FILES_ETC if month_abbr in os.path.basename(f)])
 
         # Find P files for these months with correct percentile
         p_files = []
         for month_abbr in month_abbrs:
             p_files.extend(
-                [f for f in input_files_p if month_abbr in os.path.basename(f) and per in f])
+                [f for f in INPUT_FILES_P if month_abbr in os.path.basename(f) and per in f])
 
-        # Read and sum ET rasters
-        et_sum_data = None
-        for et_file in et_files:
+        ###################### Read and sum data ######################
+        # Read ET rasters, multiply with monthly kc value and sum all rasters into a single seasonal ET raster.
+        # Initialize accumulation arrays. Set all cells to value of zero.
+        with rasterio.open(et_files[0]) as src:
+            shape = src.read(1).shape
+            et_sum = np.zeros(shape, dtype=np.float32)
+            p_sum = np.zeros(shape, dtype=np.float32)
+            et_valid = np.zeros(shape, dtype=bool)
+            p_valid = np.zeros(shape, dtype=bool)
+            meta = src.meta.copy()
+            meta.update(dtype='float32', nodata=NO_DATA_VALUE)
+
+        # --- ET SUM ---
+        for et_file in et_files[:1]:
             with rasterio.open(et_file) as src:
-                et_data = src.read(
-                    1) * kc[month_abbrs.index(os.path.basename(et_file)[:3])]
-                if et_sum_data is None:
-                    et_sum_data = et_data
-                    et_meta = src.meta.copy()
-                else:
-                    et_sum_data += et_data
+                # Read et raster data.
+                et_data = src.read(1)
+                mask = et_data != NO_DATA_VALUE
 
-        # Read and sum P rasters
-        p_sum_data = None
+                month_abbr = os.path.basename(et_file)[4:7]
+                kc_factor = kc[month_abbrs.index(month_abbr)]
+
+                # Only add data summed raster for valid cells. All other cells get 0  added.
+                et_data[mask] *= kc_factor
+                et_data[~mask] = 0  # exclude nodata from sum
+                et_sum += et_data
+                et_valid |= mask
+
+        # Set all cells that never were valid to no data value.
+        et_sum[~et_valid] = NO_DATA_VALUE
+
+        # --- P SUM ---
         for p_file in p_files:
             with rasterio.open(p_file) as src:
                 p_data = src.read(1)
-                if p_sum_data is None:
-                    p_sum_data = p_data
-                    p_meta = src.meta.copy()
-                else:
-                    p_sum_data += p_data
+                mask = p_data != NO_DATA_VALUE
+                p_data[~mask] = 0
+                p_sum += p_data
+                p_valid |= mask
 
-        # Calculate water availability index
-        water_data = p_sum_data / et_sum_data
+        p_sum[~p_valid] = NO_DATA_VALUE
 
-        # Apply threshold to create binary suitability map
-        limit = float(params["Limit"][0])  # Get water availability threshold
-        water_limit_data = (water_data > limit).astype('uint8')
+        # --- WATER AVAILABILITY ---
+        water = np.full(shape, NO_DATA_VALUE, dtype=np.float32)
+        valid_mask = et_valid & p_valid
+        water[valid_mask] = p_sum[valid_mask] / et_sum[valid_mask]
 
-        # Save outputs
+        # --- WATER LIMIT SUITABILITY ---
+        limit = float(PARAMS["Limit"][2])
+        water_limit = np.full(shape, NO_DATA_VALUE, dtype=np.float32)
+        suitable_mask = (water > limit) & valid_mask
+        unsuitable_mask = (water < limit) & valid_mask
+        water_limit[suitable_mask] = water[suitable_mask]
+        water_limit[unsuitable_mask] = 0
+
+        # ############################# Plot the rasters ##################################
+        # fig, ((ax3, ax2), (ax4, ax1)) = plt.subplots(2, 2, figsize=(10, 10))
+
+        # # Plot your data on each subplot
+        # im1 = ax1.imshow(np.ma.masked_where(
+        #     water_limit == NO_DATA_VALUE, water_limit))
+        # im2 = ax2.imshow(np.ma.masked_where(
+        #     et_sum == NO_DATA_VALUE, et_sum))
+        # im3 = ax3.imshow(np.ma.masked_where(
+        #     p_sum == NO_DATA_VALUE, p_sum))
+        # im4 = ax4.imshow(np.ma.masked_where(
+        #     water == NO_DATA_VALUE, water))
+
+        # # Create colorbars with the same height as the plots
+        # for ax, im, title in zip([ax1, ax2, ax3, ax4],
+        #                          [im1, im2, im3, im4],
+        #                          ["Water Limit Data", "ET Sum Data", "P Sum Data", "Water Data"]):
+        #     divider = make_axes_locatable(ax)
+        #     cax = divider.append_axes("right", size="5%", pad=0.05)
+        #     fig.colorbar(im, cax=cax)
+        #     ax.set_title(title)
+        # plt.tight_layout()
+        # plt.show()
+
+        # # Plot difference in masks
+        # plt.figure()
+        # plt.imshow(valid_mask != suitable_mask)
+        # plt.title("Mask mismatch between ET and Suitability")
+        # plt.colorbar()
+        # plt.show()
+
+        ######################## Save outputs ########################
+        # Create season lables
         season_label = f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}"
 
-        # Save ET sum
+        # Save ETc sum data for growing period.
         et_path = os.path.join(
-            new_dir, "ETc", f"ETc_{crop_name}_{season_label}.tif")
-        with rasterio.open(et_path, 'w', **et_meta) as dst:
-            dst.write(et_sum_data, 1)
+            NEW_RESULTS_SUBDIR, "ETc", f"ETc_{crop_name}_{season_label}.tif")
+        with rasterio.open(et_path, 'w', **meta) as dst:
+            dst.write(et_sum, 1)
 
-        # Save P sum
-        p_path = os.path.join(new_dir, "Rainfall", per,
-                              f"P_{crop_name}_{season_label}.tif")
-        with rasterio.open(p_path, 'w', **p_meta) as dst:
-            dst.write(p_sum_data, 1)
+        # Save P sum for growing period.
+        p_path = os.path.join(NEW_RESULTS_SUBDIR, "Rainfall", per,
+                              f"P_{per}_{crop_name}_{season_label}.tif")
+        with rasterio.open(p_path, 'w', **meta) as dst:
+            dst.write(p_sum, 1)
 
-        # Save water limit
+        # Save water limit for crop per season
         water_path = os.path.join(
-            new_dir, "Water", per,
-            f"Water_rain_{per}_{crop_name}_{season_label}_higher_{limit}_{PROVINCE_NAME}.tif")
-        with rasterio.open(water_path, 'w', **p_meta) as dst:
-            dst.write(water_limit_data, 1)
+            NEW_RESULTS_SUBDIR, "Water", per,
+            f"Water_rain_{per}_{crop_name}_{season_label}_higher_than_{limit}_{PROVINCE_NAME}.tif")
+        with rasterio.open(water_path, 'w', **meta) as dst:
+            dst.write(water_limit, 1)
 
         print(f"Processed {crop_name} for {per}")
 
