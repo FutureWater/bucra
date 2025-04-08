@@ -51,6 +51,24 @@ REF_ET_RESULTS_DIR = os.path.join(RESULTS_DIR, "Ref_ET/Mean_Monthly/")
 os.makedirs(REF_ET_RESULTS_DIR, exist_ok=True)
 
 ####################################################################################################
+####################### Loading DEM and province shapefile #########################################
+####################################################################################################
+with rasterio.open(DEM_PATH) as dem_src:
+    DEM_PROFILE = dem_src.profile
+    DEM_CRS = dem_src.crs
+    DEM_TRANSFORM = dem_src.transform
+    DEM_DATA = dem_src.read(1)
+    DEM_HEIGHT = dem_src.height
+    DEM_WIDTH = dem_src.width
+
+# Get province boundary
+provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+provinces_shp = gpd.read_file(provinces_filepath)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
+province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
+
+
+####################################################################################################
 ################################# Read and process NetCDF data ######################################
 ####################################################################################################
 # Multiplier for days in each month
@@ -69,21 +87,6 @@ with xr.open_dataset(INPUT_FILES[0]) as ds:
 # Read resampled DEM raster and get profile
 DEM_PATH = os.path.join(
     RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
-
-with rasterio.open(DEM_PATH) as dem_src:
-    DEM_PROFILE = dem_src.profile
-    DEM_CRS = dem_src.crs
-    DEM_TRANSFORM = dem_src.transform
-    DEM_DATA = dem_src.read(1)
-    DEM_HEIGHT = dem_src.height
-    DEM_WIDTH = dem_src.width
-
-# Get province boundary
-provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
-provinces_shp = gpd.read_file(provinces_filepath)
-province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
-
 
 ####################################################################################################
 ################################# Resample ET raster to match DEM ##################################

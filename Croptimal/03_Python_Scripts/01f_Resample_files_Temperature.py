@@ -3,7 +3,6 @@ import glob
 import calendar
 import rasterio
 import numpy as np
-import netCDF4 as nc
 import xarray as xr
 import geopandas as gpd
 from rasterio.warp import reproject, Resampling
@@ -51,8 +50,10 @@ T_LAPSE_RATE = -0.0065  # Temperature lapse rate (°C/m)
 month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
 
 
+####################################################################################################
+####################### Loading DEM and province shapefile #########################################
+# print("Loading reference DEM...")
 # Load reference DEM
-print("Loading reference DEM...")
 dem_path = os.path.join(RESULTS_DIR, "DEM",
                         f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Used to be "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
 
@@ -70,8 +71,6 @@ provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
-province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
-
 
 ####################################################################################################
 ################################# Process temperature variables ###################################
@@ -105,21 +104,20 @@ for var in T_VARS:
     monthly_means = combined_data.groupby('time.month').mean(dim='time')
 
     # Process each month
-    for month_idx in range(1, 2):
+    for month_idx in range(1, 13):
         month_name = month_abbrs[month_idx - 1]
         month_data = monthly_means['t2m'].sel(month=month_idx).values
 
         # Create a temporary raster file for cropping and reprojection
         temp_path = os.path.join(TEMP_DIR, f"temp_{var}_{month_name}.tif")
 
-        # Note: This assumes all files have the same geospatial reference
         with xr.open_dataset(input_files[0]) as ds:
-            # Create a profile for the raster
-            # Note: This part may need adjustment based on your NetCDF structure
             lon = ds['longitude']
             lat = ds['latitude']
             ds_transform = from_origin(lon.min(), lat.max(),
                                        abs(lon[1]-lon[0]), abs(lat[1]-lat[0]))
+
+        # Create a profile for the raster
         temp_profile = {
             'driver': 'GTiff',
             'height': month_data.shape[0],
@@ -150,11 +148,11 @@ for var in T_VARS:
                 source=temp_data,
                 destination=destination_array,
                 src_transform=src.transform,
-                src_crs=SRC_CRS,
+                src_crs=src.crs,
                 dst_transform=DEM_TRANSFORM,
                 dst_crs=DEM_CRS,
                 resampling=Resampling.bilinear,
-                src_nodata=NO_DATA_VALUE,
+                src_nodata=src.nodata,
                 dst_nodata=NO_DATA_VALUE
             )
 

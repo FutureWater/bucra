@@ -4,61 +4,78 @@ import calendar
 import rasterio
 import numpy as np
 from rasterio.merge import merge
+import pandas as pd
+import matplotlib.pyplot as plt
 
 """
 This script calculates temperature limits for different crops by:
-1) Processing minimum and maximum temperature files
-2) Applying crop-specific base and upper temperature thresholds
+1) Processing minimum and maximum temperature files.
+2) Applying crop-specific base and upper temperature thresholds.
+    a. For tmin, the monthly mean min temp is used.
+    b. For tmax, the 75 and 95 percentile are used.
 3) Creating temperature suitability maps based on weighted averages
 """
+####################################################################################################
+###################### Define directories, constants and file paths ################################
+####################################################################################################
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+LOCAL_PROJECTION = "EPSG:32733"
 
 # Define constants
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
-T_PERC = [0.05, 0.25]  # Percentiles to process
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
+T_PERC = [0.75, 0.95]  # Percentiles to process
 
-# Create a mock cropping calendar (replace with actual data loading)
-# Structure needs: Crop, Start_growing_season, End_growing_season, T_Base, T_Upper, and weights
-cropping_cal = [
-    {
-        "Crop": "Wheat",
-        "Start_growing_season": 11,
-        "End_growing_season": 4,
-        "T_Base": 5.0,
-        "T_Upper": 35.0,
-        "w_1": 0.2, "w_2": 0.2, "w_3": 0.2, "w_4": 0.2, "w_5": 0.2, "w_6": 0.0
-    },
-    # Add more crops as needed
-]
+# Load cropping calendar and parameters
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
+PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
+
 
 # Get input temperature files
 input_files_tmin = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Temperature", "tmin", "**", "*.tif"), recursive=True)
+    RESULTS_DIR, "Temperature", "tmin", "**", "*.tif"), recursive=True)
 input_files_tmax = glob.glob(os.path.join(
-    RESULTS_DIR, PROVINCE_NAME, "Temperature", "tmax", "**", "*.tif"), recursive=True)
+    RESULTS_DIR, "Temperature", "tmax", "**", "*.tif"), recursive=True)
 
 # Create output directory
-new_dir = os.path.join(RESULTS_DIR, PROVINCE_NAME,
-                       "_LS_Results", "Temperature")
+NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR,
+                                  "_LS_Results", "Temperature")
 
+####################################################################################################
+###################### Process parameters and create limit maps ####################################
+####################################################################################################
 # Process each percentile (and Monthly_Mean)
 for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
+    print(f"Processing temperature limits for {p_val}...")
     # Handle percentile naming and folder setup
     if p_val == "Monthly_Mean":
         per = "Monthly_Mean"
-        folder_name = "Tbase_Tupper"
-        start_name = "T_two_limits_W_"
+        folder_name = "Tmax_Monthly_Mean"
+        start_name = "Tmax_MM_between"
     else:
         per = f"{str(p_val).replace('.', '')}perc"
         folder_name = f"Tmax_{per}"
-        start_name = f"T_two_limits_Tmax_{per}_W_"
+        start_name = f"Tmax_{per}_between"
 
     # Create output directory
-    os.makedirs(os.path.join(new_dir, folder_name), exist_ok=True)
+    os.makedirs(os.path.join(NEW_RESULTS_SUBDIR, folder_name), exist_ok=True)
 
     # Process each crop
-    for crop_data in cropping_cal:
+    for idx in CROPPING_CAL.index:
+        crop_data = CROPPING_CAL.loc[idx]
         crop_name = crop_data["Crop"]
         start_month = crop_data["Start_growing_season"]
         end_month = crop_data["End_growing_season"]
@@ -71,7 +88,7 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
             months = list(range(start_month, end_month + 1))
 
         # Get weights for each month
-        weights = [crop_data[f"w_{i+1}"] for i in range(len(months))]
+        weights = [float(crop_data[f"w_{i+1}"]) for i in range(len(months))]
 
         # Get temperature thresholds
         t_base = crop_data["T_Base"]
@@ -87,7 +104,7 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
                                if month_abbr in os.path.basename(f)
                                and "Monthly_Mean" in f])
 
-        # Filter tmax files for these months with specified percentile
+        # Filter tmax files for these months with specified percentiles
         tmax_files = []
         for month_abbr in month_abbrs:
             tmax_files.extend([f for f in input_files_tmax
@@ -99,37 +116,48 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
         tmax_files_ordered = []
         for month_abbr in month_abbrs:
             for file in tmin_files:
-                if month_abbr == os.path.basename(file)[:3]:
+                if month_abbr in os.path.basename(file):
                     tmin_files_ordered.append(file)
                     break
 
             for file in tmax_files:
-                if month_abbr == os.path.basename(file)[:3]:
+                if month_abbr in os.path.basename(file):
                     tmax_files_ordered.append(file)
                     break
 
-        # Load and calculate weighted tmin
-        tmin_w_data = None
+        # Initialize accumulation arrays
+        with rasterio.open(tmin_files_ordered[0]) as src:
+            shape = src.shape
+            tmin_w_data = np.zeros(shape, dtype=np.float32)
+            tmax_w_data = np.zeros(shape, dtype=np.float32)
+            tmin_valid = np.zeros(shape, dtype=bool)
+            tmax_valid = np.zeros(shape, dtype=bool)
+            meta = src.meta.copy()
+
+        # Sum all tmin data. Add zero for invalid cells.
         for i, tmin_file in enumerate(tmin_files_ordered):
             with rasterio.open(tmin_file) as src:
-                tmin_data = src.read(1) * weights[i]
-                if tmin_w_data is None:
-                    tmin_w_data = tmin_data
-                    meta = src.meta.copy()
-                else:
-                    tmin_w_data += tmin_data
+                tmin_data = src.read(1)
+                mask = tmin_data != NO_DATA_VALUE
+                tmin_data[mask] *= weights[i]  # only multiply valid cells.
+                tmin_data[~mask] = 0
+                tmin_w_data += tmin_data
+                tmin_valid |= mask  # Update total validity mask.
+        # Set cells that were invalid in all rasters to no data value.
+        tmin_w_data[~tmin_valid] = NO_DATA_VALUE
 
-        # Load and calculate weighted tmax
-        tmax_w_data = None
+        # Sum all tmax data. Add zero for invalid cells.
         for i, tmax_file in enumerate(tmax_files_ordered):
             with rasterio.open(tmax_file) as src:
-                tmax_data = src.read(1) * weights[i]
-                if tmax_w_data is None:
-                    tmax_w_data = tmax_data
-                    if tmin_w_data is None:  # If we didn't get tmin data
-                        meta = src.meta.copy()
-                else:
-                    tmax_w_data += tmax_data
+                tmax_data = src.read(1)
+                mask = tmax_data != NO_DATA_VALUE
+                tmax_data[mask] *= weights[i]  # only multiply valid cells.
+                tmax_data[~mask] = 0
+                tmax_w_data += tmax_data
+                tmax_valid |= mask
+
+        # Set cells that were invalid in all rasters to no data value.
+        tmax_w_data[~tmax_valid] = NO_DATA_VALUE
 
         # Create temperature suitability maps
         if tmin_w_data is not None and tmax_w_data is not None:
@@ -140,18 +168,21 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
             tmax_w_lower_tupper = (tmax_w_data < t_upper).astype(np.uint8)
 
             # Combined suitability (both conditions must be met)
-            two_limits_w = tmin_w_higher_tbase * tmax_w_lower_tupper
+            two_limits_w = (tmin_w_higher_tbase) & (
+                tmax_w_lower_tupper) & tmax_valid & tmin_valid
+            two_limits_w.astype(np.uint8)
 
             # Save output
-            season_label = f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}"
+            season_label = f"{month_abbrs[0]}-{month_abbrs[-1]}"
             output_path = os.path.join(
-                new_dir, folder_name,
-                f"{start_name}{crop_name}_{season_label}.tif")
+                NEW_RESULTS_SUBDIR, folder_name,
+                f"Temp_between_{t_base}_and_{t_upper}°C_{crop_name}_{season_label}.tif")
 
-            # Update metadata for output raster
+            # Update metadata for output raster. Set all nodata values to 0.
             meta.update({
                 'dtype': 'uint8',
-                'count': 1
+                'count': 1,
+                'nodata': 0
             })
 
             # Write output raster
@@ -159,7 +190,7 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
                 dst.write(two_limits_w, 1)
 
             print(
-                f"Created temperature suitability map for {crop_name}, {season_label}, {per}")
+                f"  Created temperature suitability map for {crop_name}, {season_label}, {per}")
         else:
             print(
                 f"Missing temperature data for {crop_name}, {season_label}, {per}")

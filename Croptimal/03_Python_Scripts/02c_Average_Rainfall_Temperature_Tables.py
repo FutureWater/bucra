@@ -52,7 +52,7 @@ p_min_files = glob.glob(os.path.join(
     RESULTS_DIR, "Rainfall", "Mean_Monthly", "*.tif"))
 p_files_all = p_avg_files + p_max_files + p_min_files
 
-var_dict = {"Temperature": t_files_all, "Precipitation": p_files_all}
+var_dict = {"Temperature": t_files_all, "Rainfall": p_files_all}
 
 
 # Load commune shapefile

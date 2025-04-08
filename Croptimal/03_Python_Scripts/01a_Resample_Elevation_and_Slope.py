@@ -27,26 +27,25 @@ GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 PARAMETERS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
+DEM_DATA_DIR = os.path.join(RESULTS_DIR, "DEM")
+INDIR_ELEV = os.path.join(RESULTS_DIR, "_LS_Results", "Elevation")
+DEM_PATH = os.path.join(DATA_DIR, "Elevation",
+                        "SRTM_30M_Angola_mask.tif")
+
 # Set resolution and projection
 RES = 250                                       # Set resolution in meters
 LOCAL_PROJ = "EPSG:32733"
+NO_DATA_VALUE = -9999.0
+
+# Create output directory for DEM
 
 
 def ensure_dir(directory):  # Function to ensure directory exists
     os.makedirs(directory, exist_ok=True)
 
 
-# Create output directory for DEM
-DEM_DATA_DIR = os.path.join(RESULTS_DIR, "DEM")
 ensure_dir(DEM_DATA_DIR)
-
-# Create output directory for slope
-INDIR_ELEV = os.path.join(RESULTS_DIR, "_LS_Results", "Elevation")
 ensure_dir(INDIR_ELEV)
-
-# Load original DEM (assuming it's already available)
-DEM_PATH = os.path.join(DATA_DIR, "Elevation",
-                        "SRTM_30M_Angola_mask.tif")  # Check which dem
 
 # Load province shapefile
 PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
@@ -112,7 +111,6 @@ target_transform = rasterio.transform.from_bounds(
 print(f"Bilinear Resampling Raster DEM: {PROVINCE_NAME}")
 bilinear_dem = np.zeros((height, width), dtype=np.float32)
 
-new_nodata = float(-9999)
 with rasterio.open(cropped_dem_path) as src:
     reproject(
         source=src.read(1),
@@ -123,7 +121,7 @@ with rasterio.open(cropped_dem_path) as src:
         # Transform matrix from local projection Transform = (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
         dst_transform=target_transform,
         dst_crs=LOCAL_PROJ,
-        dst_nodata=new_nodata,
+        dst_nodata=NO_DATA_VALUE,
         resampling=Resampling.bilinear
     )
 
@@ -157,7 +155,7 @@ out_profile = {
     "dtype": bilinear_dem.dtype,
     "crs": LOCAL_PROJ,
     "transform": target_transform,
-    "nodata": new_nodata
+    "nodata": NO_DATA_VALUE
 }
 
 # Write bilinear resampled DEM
@@ -199,7 +197,8 @@ with rasterio.open(slope_path, "w", **out_profile) as dst:
 # Get slope threshold from params (you'll need to define this)
 slope_threshold = float(
     PARAMETERS.loc[PARAMETERS['Parameter'] == 'Slope', 'Limit'].values[0])
-slope_lower_limit = (slope < slope_threshold).astype(np.uint8)
+slope_lower_limit = (slope < slope_threshold) & (bilinear_dem != NO_DATA_VALUE)
+slope_lower_limit = slope_lower_limit.astype(np.uint8)  # Convert to uint8
 
 # Save threshold raster
 print(f"Write rasters slope and slope limit: {PROVINCE_NAME}")

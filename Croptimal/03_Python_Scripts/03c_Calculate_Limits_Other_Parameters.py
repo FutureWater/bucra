@@ -4,9 +4,7 @@ import calendar
 import pandas as pd
 import rasterio
 import numpy as np
-from rasterio.warp import calculate_default_transform, reproject, Resampling
-from rasterio.crs import CRS
-from rasterio.features import geometry_mask
+import matplotlib.pyplot as plt
 
 """
 This script calculates suitability limits for various parameters:
@@ -15,170 +13,145 @@ This script calculates suitability limits for various parameters:
 3) NDVI during growing seasons
 """
 
+
+####################################################################################################
+###################### Define directories, constants and file paths ################################
+####################################################################################################
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+HHS_DATA_DIR = os.path.join(DATA_DIR, "Soil_Hydraulic_Properties")
+LS_RESULTS = os.path.join(RESULTS_DIR, '_LS_Results')
+
 # Define constants
-DATA_DIR = "your_data_directory"  # Replace with actual path
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
 RES = 250  # Resolution in meters
-HHS_DATA_DIR = "path_to_hhs_data"  # Replace with actual HHS data directory
+NO_DATA_VALUE = -9999.0  # No data value
+LOCAL_PROJECTION = "EPSG:32733"
 
-# Load parameters table (replace with actual data loading)
-# Structure needs: Parameter, LS_Results_Folder, Weight, Limit, Units, Abrev
-params = pd.DataFrame({
-    'Parameter': ['Ksat', 'WCavail', 'P', 'K', 'N', 'NDVI'],
-    'LS_Results_Folder': ['Soil_Hydraulic_Properties', 'Soil_Hydraulic_Properties',
-                          'Soil_Nutrient_Content', 'Soil_Nutrient_Content',
-                          'Soil_Nutrient_Content', 'NDVI'],
-    'Weight': [1, 1, 1, 1, 1, 1],
-    'Limit': ['10', '100', '5', '100', '10', '0.6'],
-    'Units': ['mm/d', 'mm/m', 'mg/kg', 'mg/kg', 'mg/kg', ''],
-    'Abrev': ['ksat', 'wcavail', 'p', 'k', 'n', 'ndvi']
-})
 
-# Load crop calendar (replace with actual data loading)
-cropping_cal = pd.DataFrame({
-    'Crop': ['Wheat'],
-    'Start_growing_season': [11],
-    'End_growing_season': [4]
-})
+# Load cropping calendar and parameters
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
+PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
-# Process each parameter folder
-for folder in params['LS_Results_Folder'].unique():
+
+####################################################################################################
+###################### Process parameters and create limit maps ####################################
+####################################################################################################
+############## Process each parameter folder ##############
+for folder in PARAMS['LS_Results_Folder'].unique():
+    "Processing other suitability parameters..."
     # Get parameters for this folder
-    folder_mask = params['LS_Results_Folder'] == folder
-    parameters = params.loc[folder_mask, 'Parameter'].tolist()
-    limits = params.loc[folder_mask, 'Limit'].tolist()
-    units = params.loc[folder_mask, 'Units'].tolist()
-    abrevs = params.loc[folder_mask, 'Abrev'].tolist()
+    folder_mask = PARAMS['LS_Results_Folder'] == folder
+    parameters = PARAMS.loc[folder_mask, 'Parameter'].tolist()
+    limits = PARAMS.loc[folder_mask, 'Limit'].tolist()
+    units = PARAMS.loc[folder_mask, 'Units'].tolist()
+    abrevs = PARAMS.loc[folder_mask, 'Abrev'].tolist()
 
     # Create output directory
-    new_dir = os.path.join(RESULTS_DIR, PROVINCE_NAME, "_LS_Results", folder)
-    os.makedirs(new_dir, exist_ok=True)
+    new_results_subdir = os.path.join(RESULTS_DIR, "_LS_Results", folder)
+    os.makedirs(new_results_subdir, exist_ok=True)
 
     # Skip folders handled in other scripts
     if folder in ["Elevation", "Water"]:
-        print(f"Skipping {folder} - calculated in other scripts")
+        print(f"    Skipping {folder} - calculated in other scripts")
         continue
 
-    # Process soil hydraulic properties
-    if folder == "Soil_Hydraulic_Properties":
-        print(f"Processing {folder}...")
+    ############## Process NDVI ##############
+    if folder == "NDVI":
+        print(f"    Processing {folder}...")
+        # Get NDVI files
+        ndvi_files = glob.glob(os.path.join(
+            RESULTS_DIR, "NDVI", 'Mean_Monthly', "*.tif"))
 
-        # Load reference DEM
-        dem_path = os.path.join(
-            RESULTS_DIR, PROVINCE_NAME, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
-        with rasterio.open(dem_path) as dem_src:
-            dem_meta = dem_src.meta.copy()
-            dem_crs = dem_src.crs
-            dem_transform = dem_src.transform
-            dem_shape = dem_src.shape
+        # Process each crop's growing season
+        for _, crop_row in CROPPING_CAL.iterrows():
+            start_month = crop_row['Start_growing_season']
+            end_month = crop_row['End_growing_season']
+            crop = crop_row['Crop']
 
-        # Create boundary in WGS84 for cropping
-        boundary_crs = CRS.from_epsg(4326)
-        boundary_transform, boundary_width, boundary_height = calculate_default_transform(
-            dem_crs, boundary_crs, dem_shape[1], dem_shape[0],
-            transform=dem_transform
-        )
+            # Determine months in growing season
+            if start_month > end_month:
+                months = list(range(start_month, 13)) + \
+                    list(range(1, end_month + 1))
+            else:
+                months = list(range(start_month, end_month + 1))
 
-        # Load HHS data files that match parameters
-        hhs_files = []
-        for param in parameters:
-            hhs_files.extend(glob.glob(os.path.join(
-                HHS_DATA_DIR, f"**/*{param}*.tif"), recursive=True))
+            month_abbrs = [calendar.month_abbr[m] for m in months]
 
-        # Load and process each HHS parameter
-        for param in parameters:
-            print(f"  Processing {param}...")
+            # Find NDVI files for these months
+            season_ndvi_files = []
+            for month_abbr in month_abbrs:
+                season_ndvi_files.extend(
+                    [f for f in ndvi_files if month_abbr in os.path.basename(f)])
 
-            # Set multiplier based on parameter
-            multiplier = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
-
-            # Get limit and unit for this parameter
-            idx = parameters.index(param)
-            limit = limits[idx]
-            unit = units[idx]
-
-            # Find topsoil and subsoil files
-            topsoil_file = None
-            subsoil_file = None
-            for file in hhs_files:
-                if param in file.lower():
-                    if "topsoil" in file.lower():
-                        topsoil_file = file
-                    elif "subsoil" in file.lower():
-                        subsoil_file = file
-
-            if not topsoil_file or not subsoil_file:
-                print(f"  Missing soil data for {param}")
+            if not season_ndvi_files:
+                print(f"  No NDVI files found for months {month_abbrs}")
                 continue
 
-            # Process topsoil
-            with rasterio.open(topsoil_file) as src:
-                # Division by 10000 as in R script
-                topsoil_data = src.read(1) / 10000
-                topsoil_meta = src.meta.copy()
+            # Sum all NDVI for the whole season
+            ndvi_sum = None
+            for ndvi_file in season_ndvi_files:
+                with rasterio.open(ndvi_file) as src:
+                    ndvi_data = src.read(1)
+                    if ndvi_sum is None:
+                        # Initialize arrays
+                        ndvi_sum = np.zeros(ndvi_data.shape, dtype=np.float32)
+                        ndvi_valid = np.zeros(ndvi_data.shape, dtype=bool)
+                        ndvi_meta = src.meta.copy()
 
-                # Reproject to match DEM
-                topsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
-                reproject(
-                    source=rasterio.band(src, 1),
-                    destination=topsoil_reproj,
-                    src_transform=src.transform,
-                    src_crs=src.crs,
-                    dst_transform=dem_transform,
-                    dst_crs=dem_crs,
-                    resampling=Resampling.bilinear
-                )
+                    # Only add valid cells. Add zero for non valid cells. Update valid mask.
+                    mask = ndvi_data != NO_DATA_VALUE
+                    ndvi_data[~mask] = 0
+                    ndvi_sum += ndvi_data
+                    ndvi_valid |= mask
 
-            # Process subsoil
-            with rasterio.open(subsoil_file) as src:
-                # Division by 10000 as in R script
-                subsoil_data = src.read(1) / 10000
-
-                # Reproject to match DEM
-                subsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
-                reproject(
-                    source=rasterio.band(src, 1),
-                    destination=subsoil_reproj,
-                    src_transform=src.transform,
-                    src_crs=src.crs,
-                    dst_transform=dem_transform,
-                    dst_crs=dem_crs,
-                    resampling=Resampling.bilinear
-                )
-
-            # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
-            weighted_topsoil = topsoil_reproj * 0.3
-            weighted_subsoil = subsoil_reproj * 1.7
-            weighted_avg = (weighted_topsoil +
-                            weighted_subsoil) / 2 * multiplier
+            # Calculate mean NDVI for the whole season
+            ndvi_mean = np.full(
+                ndvi_sum.shape, NO_DATA_VALUE, dtype=np.float32)
+            ndvi_mean[ndvi_valid] = ndvi_sum[ndvi_valid] / \
+                len(season_ndvi_files)
 
             # Apply limit
-            limit_value = float(limit)
-            limit_raster = (weighted_avg > limit_value).astype(np.uint8)
+            # Assuming NDVI is the last parameter
+            limit_value = float(limits[0])
+            ndvi_limit = (ndvi_mean > limit_value) & ndvi_valid
+            ndvi_limit = ndvi_limit.astype(np.uint8)
 
             # Save output
             output_path = os.path.join(
-                new_dir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
-            out_meta = dem_meta.copy()
-            out_meta.update({
-                'dtype': 'uint8',
-                'count': 1
-            })
+                new_results_subdir,
+                f"NDVI_limit_higher_{limits[0].replace('.', '')}_{crop}_"
+                f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}.tif"
+            )
+
+            out_meta = ndvi_meta.copy()
+            out_meta.update({'dtype': 'uint8',
+                             'nodata': 0})
 
             with rasterio.open(output_path, 'w', **out_meta) as dst:
-                dst.write(limit_raster, 1)
+                dst.write(ndvi_limit, 1)
 
-    # Process soil nutrient content
+    ############## Process soil nutrient content ##############
     elif folder == "Soil_Nutrient_Content":
         print(f"Processing {folder}...")
 
         # Get files
         snc_files = glob.glob(os.path.join(
-            RESULTS_DIR, PROVINCE_NAME, "Soil_Nutrient_Content", "*.tif"))
+            RESULTS_DIR, "Soil_Nutrient_Content", "*.tif"))
 
         # Process each parameter
-        for i, param in enumerate(parameters):
+        for i, param in enumerate(parameters[:1]):
             abrev = abrevs[i]
             limit = limits[i]
             unit = units[i]
@@ -201,78 +174,129 @@ for folder in params['LS_Results_Folder'].unique():
 
                 # Save output
                 output_path = os.path.join(
-                    new_dir,
-                    f"Extractable_{abrev.upper()}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif"
+                    new_results_subdir,
+                    f"Extractable_{abrev.upper()}_Soil_higher_than_{limit}{unit}_{PROVINCE_NAME}.tif"
                 )
 
                 out_meta = snc_meta.copy()
-                out_meta.update({'dtype': 'uint8'})
+                out_meta.update({'dtype': 'uint8',
+                                'nodata': 0})
 
                 with rasterio.open(output_path, 'w', **out_meta) as dst:
                     dst.write(limit_raster, 1)
 
-    # Process NDVI
-    elif folder == "NDVI":
-        print(f"Processing {folder}...")
+    # ############## Process soil hydraulic properties ##############
+    # if folder == "Soil_Hydraulic_Properties":
+    #   print(f"Processing {folder}...")
+    #     # Load reference DEM
+    #     dem_path = os.path.join(
+    #         RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
+    #     with rasterio.open(dem_path) as dem_src:
+    #         dem_profile = dem_src.profile.copy()
+    #         dem_crs = dem_src.crs
+    #         dem_transform = dem_src.transform
+    #         dem_shape = dem_src.shape
 
-        # Get NDVI files
-        ndvi_files = glob.glob(os.path.join(
-            RESULTS_DIR, PROVINCE_NAME, "NDVI", "*.tif"))
+    #     # Create boundary in WGS84 for cropping
+    #     boundary_crs = 'EPSG:4326'
+    #     boundary_transform, boundary_width, boundary_height = calculate_default_transform(
+    #         dem_crs, boundary_crs, dem_shape[1], dem_shape[0],
+    #         left = dem_src.bounds.left, bottom = dem_src.bounds.bottom,
+    #         right = dem_src.bounds.right, top = dem_src.bounds.top,
+    #         resolution=RES
+    #     )
 
-        # Process each crop's growing season
-        for _, crop_row in cropping_cal.iterrows():
-            start_month = crop_row['Start_growing_season']
-            end_month = crop_row['End_growing_season']
+    #     # Load HHS data files that match parameters
+    #     hhs_files = []
+    #     for param in parameters:
+    #         hhs_files.extend(glob.glob(os.path.join(
+    #             HHS_DATA_DIR, "*.tif")))
 
-            # Determine months in growing season
-            if start_month > end_month:
-                months = list(range(start_month, 13)) + \
-                    list(range(1, end_month + 1))
-            else:
-                months = list(range(start_month, end_month + 1))
+    #     # Load and process each HHS parameter
+    #     for param in parameters:
+    #         print(f"  Processing {param}...")
 
-            month_abbrs = [calendar.month_abbr[m] for m in months]
+    #         # Set multiplier based on parameter
+    #         MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
 
-            # Find NDVI files for these months
-            season_ndvi_files = []
-            for month_abbr in month_abbrs:
-                season_ndvi_files.extend(
-                    [f for f in ndvi_files if month_abbr in os.path.basename(f)])
+    #         # Get limit and unit for this parameter
+    #         idx = parameters.index(param)
+    #         limit = limits[idx]
+    #         unit = units[idx]
 
-            if not season_ndvi_files:
-                print(f"  No NDVI files found for months {month_abbrs}")
-                continue
+    #         # Find topsoil and subsoil files
+    #         topsoil_file = None
+    #         subsoil_file = None
+    #         for file in hhs_files:
+    #             if param in file.lower():
+    #                 if "topsoil" in file.lower():
+    #                     topsoil_file = file
+    #                 elif "subsoil" in file.lower():
+    #                     subsoil_file = file
 
-            # Calculate mean NDVI
-            ndvi_sum = None
-            for ndvi_file in season_ndvi_files:
-                with rasterio.open(ndvi_file) as src:
-                    ndvi_data = src.read(1)
-                    if ndvi_sum is None:
-                        ndvi_sum = ndvi_data
-                        ndvi_meta = src.meta.copy()
-                    else:
-                        ndvi_sum += ndvi_data
+    #         if not topsoil_file or not subsoil_file:
+    #             print(f"  Missing soil data for {param}")
+    #             continue
 
-            # Calculate mean
-            ndvi_mean = ndvi_sum / len(season_ndvi_files)
+    #         # Process topsoil
+    #         with rasterio.open(topsoil_file) as src:
+    #             # Division by 10000 as in R script
+    #             topsoil_data = src.read(1) / 10000
+    #             topsoil_meta = src.meta.copy()
 
-            # Apply limit
-            # Assuming NDVI is the last parameter
-            limit_value = float(limits[-1])
-            ndvi_limit = (ndvi_mean > limit_value).astype(np.uint8)
+    #             # Reproject to match DEM
+    #             topsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
+    #             reproject(
+    #                 source=rasterio.band(src, 1),
+    #                 destination=topsoil_reproj,
+    #                 src_transform=src.transform,
+    #                 src_crs=src.crs,
+    #                 dst_transform=dem_transform,
+    #                 dst_crs=dem_crs,
+    #                 resampling=Resampling.bilinear,
+    #                 src_nodata=NO_DATA_VALUE,
+    #                 dst_nodata=NO_DATA_VALUE
+    #             )
 
-            # Save output
-            output_path = os.path.join(
-                new_dir,
-                f"NDVI_limit_higher_{limits[-1].replace('.', '_')}_"
-                f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}_{PROVINCE_NAME}.tif"
-            )
+    #         # Process subsoil
+    #         with rasterio.open(subsoil_file) as src:
+    #             # Division by 10000 as in R script
+    #             subsoil_data = src.read(1) / 10000
 
-            out_meta = ndvi_meta.copy()
-            out_meta.update({'dtype': 'uint8'})
+    #             # Reproject to match DEM
+    #             subsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
+    #             reproject(
+    #                 source=rasterio.band(src, 1),
+    #                 destination=subsoil_reproj,
+    #                 src_transform=src.transform,
+    #                 src_crs=src.crs,
+    #                 dst_transform=dem_transform,
+    #                 dst_crs=dem_crs,
+    #                 resampling=Resampling.bilinear,
+    #                 src_nodata=NO_DATA_VALUE,
+    #                 dst_nodata=NO_DATA_VALUE
+    #             )
 
-            with rasterio.open(output_path, 'w', **out_meta) as dst:
-                dst.write(ndvi_limit, 1)
+    #         # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
+    #         weighted_topsoil = topsoil_reproj * 0.3
+    #         weighted_subsoil = subsoil_reproj * 1.7
+    #         weighted_avg = (weighted_topsoil +
+    #                         weighted_subsoil) / 2 * MULTIPLIER
+
+    #         # Apply limit
+    #         limit_value = float(limit)
+    #         limit_raster = (weighted_avg > limit_value).astype(np.uint8)
+
+    #         # Save output
+    #         output_path = os.path.join(
+    #             new_dir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
+    #         out_meta = dem_profile.copy()
+    #         out_meta.update({
+    #             'dtype': 'uint8',
+    #             'count': 1
+    #         })
+
+    #         with rasterio.open(output_path, 'w', **out_meta) as dst:
+    #             dst.write(limit_raster, 1)
 
 print("Parameter limits calculation complete!")

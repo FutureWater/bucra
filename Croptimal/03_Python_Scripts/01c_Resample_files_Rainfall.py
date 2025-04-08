@@ -21,7 +21,7 @@ This script processes monthly rainfall data by:
 """
 
 ####################################################################################################
-########################## Define directories and file paths #######################################
+###################### Define directories, constants and file paths ################################
 ####################################################################################################
 # Define directories and file paths
 current_wd = os.getcwd()
@@ -49,9 +49,31 @@ os.makedirs(RESULTS_RAINFALL_DIR, exist_ok=True)
 
 
 ####################################################################################################
+####################### Loading DEM and province shapefile #########################################
+####################################################################################################
+print("Loading reference DEM...")
+DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
+
+with rasterio.open(DEM_PATH) as dem_src:
+    DEM_TRANSFORM = dem_src.transform
+    DEM_CRS = dem_src.crs
+    DEM_HEIGHT = dem_src.height
+    DEM_WIDTH = dem_src.width
+    DEM_PROFILE = dem_src.profile
+
+# Load province shapefile (EPSG:4326) and reproject
+print("Loading province shapefile...")
+provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
+province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
+
+####################################################################################################
 ######################### Group monthly rainfall files per month in dictionary #####################
 ####################################################################################################
 # Function to extract month number from filename using regex
+
+
 def extract_month(filename):
     """Extract month number (6-7th characters) from CHIRPS filename"""
     basename = os.path.basename(filename)
@@ -70,6 +92,7 @@ def extract_month(filename):
             print(
                 f"Warning: Could not extract month from filename: {basename}")
             return None
+# --------
 
 
 # Load all rainfall files
@@ -81,7 +104,7 @@ if not INPUT_FILES:
 
 print(f"Found {len(INPUT_FILES)} rainfall files")
 
-# Group files by month (equivalent to stackApply in R)
+# Group files by month
 MONTHLY_GROUPS = {}
 for file in INPUT_FILES:
     month = extract_month(file)
@@ -121,21 +144,7 @@ for month_idx, month in sorted([(int(k), k) for k in MONTHLY_GROUPS.keys()]):
         print(f"Warning: No data found for month {month}")
 
 # Load reference DEM
-print("Loading reference DEM...")
-DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
-with rasterio.open(DEM_PATH) as dem_src:
-    DEM_TRANSFORM = dem_src.transform
-    DEM_CRS = dem_src.crs
-    DEM_HEIGHT = dem_src.height
-    DEM_WIDTH = dem_src.width
-    DEM_PROFILE = dem_src.profile
 
-# Load province shapefile (EPSG:4326) and reproject
-print("Loading province shapefile...")
-provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
-province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
 # List of month abbreviations (equivalent to month.abb in R)
 MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
@@ -171,7 +180,7 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
         dst_transform=DEM_TRANSFORM,
         dst_crs=DEM_CRS,
         resampling=Resampling.bilinear,
-        src_nodata=NO_DATA_VALUE,
+        src_nodata=src.nodata,
         dst_nodata=NO_DATA_VALUE
     )
 

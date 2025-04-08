@@ -114,9 +114,9 @@ unique_combis = [f"Land_Suitability_{combo}" for combo in unique_combis]
 communes_shp = gpd.read_file(COMMUNES)
 communes_shp_proj = communes_shp.to_crs(LOCAL_PRO)
 communes_df = pd.DataFrame({
-    "Province": communes_shp['NAME_1'].str.replace(" ", "_"),
-    "Municipality": communes_shp['NAME_2'],
-    "Commune": communes_shp['NAME_3']
+    "Province": communes_shp_proj['NAME_1'].str.replace(" ", "_"),
+    "Municipality": communes_shp_proj['NAME_2'],
+    "Commune": communes_shp_proj['NAME_3']
     # "Zone": communes_shp['Zone']  # Uncomment if Zone is in the shapefile
 })
 

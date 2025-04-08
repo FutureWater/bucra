@@ -57,6 +57,7 @@ for folder in ["Water", "ETc", "Rainfall"]:
 
 ###################### Process each percentile and mean ######################
 for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
+    print(f"Processing water availability with {p_val} Precipitation...")
     # Handle percentile naming
     if p_val == "Mean_Monthly":
         per = "Mean_Monthly"
@@ -70,8 +71,7 @@ for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
 
     ###################### Process each crop ######################
     # (iterate over rows of cropping calendar)
-    for idx in CROPPING_CAL.index:
-        crop_data = CROPPING_CAL.loc[idx]
+    for _, crop_data in CROPPING_CAL.iterrows():
         crop_name = crop_data["Crop"]
         start_month = crop_data["Start_growing_season"]
         end_month = crop_data["End_growing_season"]
@@ -81,42 +81,34 @@ for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
             # Handle seasons that cross year boundary.
             months = list(range(start_month, 13)) + \
                 list(range(1, end_month + 1))
-            kc = [float(crop_data[f"kc_{m}"]) for m in months]
-
         else:
             months = list(range(start_month, end_month + 1))
-            kc = [float(crop_data[f"kc_{m}"])
-                  for m in range(start_month, end_month + 1)]
 
-        # Get 3-letter month abbreviations for filtering file lists.
+        # Set seasonal values.
+        kc = [float(crop_data[f"kc_{m}"]) for m in months]
         month_abbrs = [calendar.month_abbr[m] for m in months]
+        season_label = f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}"
 
-        # Find ET filepaths for these months
-        et_files = []
-        for month_abbr in month_abbrs:
-            et_files.extend(
-                [f for f in INPUT_FILES_ETC if month_abbr in os.path.basename(f)])
-
-        # Find P files for these months with correct percentile
-        p_files = []
-        for month_abbr in month_abbrs:
-            p_files.extend(
-                [f for f in INPUT_FILES_P if month_abbr in os.path.basename(f) and per in f])
+        # Find ET and P filepaths for these months
+        et_files = [f for f in INPUT_FILES_ETC if any(
+            m in os.path.basename(f) for m in month_abbrs)]
+        p_files = [f for f in INPUT_FILES_P if per in f and any(
+            m in os.path.basename(f) for m in month_abbrs)]
 
         ###################### Read and sum data ######################
         # Read ET rasters, multiply with monthly kc value and sum all rasters into a single seasonal ET raster.
         # Initialize accumulation arrays. Set all cells to value of zero.
         with rasterio.open(et_files[0]) as src:
             shape = src.read(1).shape
-            et_sum = np.zeros(shape, dtype=np.float32)
-            p_sum = np.zeros(shape, dtype=np.float32)
-            et_valid = np.zeros(shape, dtype=bool)
-            p_valid = np.zeros(shape, dtype=bool)
             meta = src.meta.copy()
             meta.update(dtype='float32', nodata=NO_DATA_VALUE)
 
+        et_sum = np.zeros(shape, dtype=np.float32)
+        p_sum = np.zeros(shape, dtype=np.float32)
+        et_valid = np.zeros(shape, dtype=bool)
+        p_valid = np.zeros(shape, dtype=bool)
         # --- ET SUM ---
-        for et_file in et_files[:1]:
+        for et_file in et_files:
             with rasterio.open(et_file) as src:
                 # Read et raster data.
                 et_data = src.read(1)
@@ -152,11 +144,13 @@ for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
 
         # --- WATER LIMIT SUITABILITY ---
         limit = float(PARAMS["Limit"][2])
-        water_limit = np.full(shape, NO_DATA_VALUE, dtype=np.float32)
-        suitable_mask = (water > limit) & valid_mask
-        unsuitable_mask = (water < limit) & valid_mask
-        water_limit[suitable_mask] = water[suitable_mask]
-        water_limit[unsuitable_mask] = 0
+        # water_limit = np.full(shape, NO_DATA_VALUE, dtype=np.float32)
+        water_limit = (water > limit) & valid_mask
+        water_limit.astype(np.uint8)
+
+        # unsuitable_mask = (water < limit) & valid_mask
+        # water_limit[suitable_mask] = water[suitable_mask]
+        # water_limit[unsuitable_mask] = 0
 
         # ############################# Plot the rasters ##################################
         # fig, ((ax3, ax2), (ax4, ax1)) = plt.subplots(2, 2, figsize=(10, 10))
@@ -193,25 +187,22 @@ for p_idx, p_val in enumerate(P_PERC + ["Mean_Monthly"]):
         # Create season lables
         season_label = f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}"
 
-        # Save ETc sum data for growing period.
-        et_path = os.path.join(
-            NEW_RESULTS_SUBDIR, "ETc", f"ETc_{crop_name}_{season_label}.tif")
-        with rasterio.open(et_path, 'w', **meta) as dst:
-            dst.write(et_sum, 1)
+        # Save rasters
+        out_paths = {
+            "ETc": os.path.join(NEW_RESULTS_SUBDIR, "ETc", f"ETc_{crop_name}_{season_label}.tif"),
+            "P": os.path.join(NEW_RESULTS_SUBDIR, "Rainfall", per, f"P_{per}_{crop_name}_{season_label}.tif"),
+            "Water": os.path.join(NEW_RESULTS_SUBDIR, "Water", per,
+                                  f"Water_availability_{per}_{crop_name}_{season_label}_higher_than_{limit}.tif")
+        }
 
-        # Save P sum for growing period.
-        p_path = os.path.join(NEW_RESULTS_SUBDIR, "Rainfall", per,
-                              f"P_{per}_{crop_name}_{season_label}.tif")
-        with rasterio.open(p_path, 'w', **meta) as dst:
-            dst.write(p_sum, 1)
+        for label, arr in zip(out_paths, [et_sum, p_sum, water_limit]):
+            if label == 'Water':
+                meta.update({'dtype': 'uint8',
+                             'nodata': 0})
+            with rasterio.open(out_paths[label], "w", **meta) as dst:
+                dst.write(arr, 1)
 
-        # Save water limit for crop per season
-        water_path = os.path.join(
-            NEW_RESULTS_SUBDIR, "Water", per,
-            f"Water_rain_{per}_{crop_name}_{season_label}_higher_than_{limit}_{PROVINCE_NAME}.tif")
-        with rasterio.open(water_path, 'w', **meta) as dst:
-            dst.write(water_limit, 1)
+        print(f"    Processed {crop_name} in {season_label} for {per}")
 
-        print(f"Processed {crop_name} for {per}")
 
 print("Water availability analysis complete!")

@@ -7,13 +7,14 @@ import xarray as xr
 import geopandas as gpd
 from rasterio.warp import reproject, Resampling
 from rasterio.mask import mask
+from rasterio.transform import from_origin
 from collections import defaultdict
 import matplotlib.pyplot as plt
 
 """
 This script calculates temperature percentiles for each month by:
-1. Processing each temperature variable (tmin, tmax, tavg)
-2. For each variable, calculating specific percentiles (5th, 25th, etc.)
+1. Processing each temperature variable
+2. For each variable, calculating specific percentiles (75th, 95th, etc.)
 3. Grouping data by month and calculating percentiles across years
 4. Cropping results to a buffered province boundary
 5. Resampling to match a reference DEM
@@ -40,16 +41,19 @@ TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
 # Define constants
 RES = 250  # Resolution in meters
-T_VARS = ["tavg", "tmin", "tmax"]  # Temperature variables
-T_PERC = [0.05, 0.25]  # Percentiles to calculate (5% and 25%)
+LOCAL_PROJ = "EPSG:32733"  # Local projection
+SRC_CRS = "EPSG:4326"  # Projection from NetCDF files: WGS84 projection
+T_VARS = ["tmax"]  # , "tmin", "tavg"]  # Only percentiles needed for tmax
+T_PERC = [0.75, 0.95]  # Percentiles to calculate (5% and 25%)
 NO_DATA_VALUE = -9999.0  # No data value
-
+T_LAPSE_RATE = -0.0065  # Temperature lapse rate (°C/m)
 
 # Load reference DEM
 print("Loading reference DEM...")
 dem_path = os.path.join(
     RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
 with rasterio.open(dem_path) as dem_src:
+    DEM_DATA = dem_src.read(1)
     DEM_PROFILE = dem_src.profile.copy()
     DEM_TRANSFORM = dem_src.transform
     DEM_CRS = dem_src.crs
@@ -62,7 +66,7 @@ print("Loading province shapefile...")
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-province_shp_sel_reproj = province_shp_sel.to_crs(DEM_CRS)
+province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
 
 
 ####################################################################################################
@@ -78,9 +82,9 @@ for var in T_VARS:
         print(f"  Calculating {p_t*100}% percentile for {var}...")
 
         # Create output directory
-        new_results_subdirults_subdir = os.path.join(RESULTS_DIR,
-                                                     "Temperature", var, f"{p_str}perc")
-        os.makedirs(new_results_subdirults_subdir, exist_ok=True)
+        new_results_subdir = os.path.join(RESULTS_DIR,
+                                          "Temperature", var, f"{p_str}perc")
+        os.makedirs(new_results_subdir, exist_ok=True)
 
         # Get input files for this temperature variable
         input_files = glob.glob(os.path.join(
@@ -122,6 +126,7 @@ for var in T_VARS:
 
         # Calculate percentiles for each month
         for month, data_list in month_data_dict.items():
+            month_name = calendar.month_abbr[month]
             if not data_list:
                 print(f"  No data found for month {month}")
                 continue
@@ -166,32 +171,36 @@ for var in T_VARS:
 
         # Get metadata from sample file
         with rasterio.open(sample_file) as src:
-            sample_meta = src.meta.copy()
+            sample_profile = src.profile.copy()
             sample_transform = src.transform
             sample_crs = src.crs
 
         # Process each month
         for month, percentile_data in out_layers.items():
+            print(f"  Processing month {month}...")
             month_name = calendar.month_abbr[month]
-            print(f"    Processing {month_name}...")
 
             # Create a temporary file to hold the percentile data
             temp_path = os.path.join(TEMP_DIR, f"temp_{month_name}.tif")
 
-            # Create a profile for the temporary file
-            temp_profile = sample_meta.copy()
-            temp_profile.update({
+            # Create a profile for the temporary file (based on the NetCDF data)
+            ds_transform = from_origin(lon.min(), lat.max(),
+                                       abs(lon[1]-lon[0]), abs(lat[1]-lat[0]))
+            temp_profile = {
+                'driver': 'GTiff',
                 'height': percentile_data.shape[0],
                 'width': percentile_data.shape[1],
                 'count': 1,
-            })
+                'dtype': percentile_data.dtype,
+                'crs': SRC_CRS,
+                'transform': ds_transform}
 
             # Write the percentile data to the temporary file
             with rasterio.open(temp_path, 'w', **temp_profile) as dst:
-                dst.write(percentile_data.astype(rasterio.float32), 1)
+                dst.write(percentile_data, 1)
 
             # Create an output array for the resampled data
-            resampled_data = np.full(
+            destination_array = np.full(
                 DEM_SHAPE, NO_DATA_VALUE, dtype=np.float32)
 
             # Reproject and resample the data to match the DEM
@@ -199,23 +208,25 @@ for var in T_VARS:
                 temp_data = src.read(1)
                 reproject(
                     source=temp_data,
-                    destination=resampled_data,
+                    destination=destination_array,
                     src_transform=src.transform,
                     src_crs=src.crs,
                     dst_transform=DEM_TRANSFORM,
                     dst_crs=DEM_CRS,
-                    resampling=Resampling.bilinear
+                    resampling=Resampling.bilinear,
+                    src_nodata=src.nodata,
+                    dst_nodata=NO_DATA_VALUE
                 )
 
             # Create a memory file with the reprojected data for masking
             with rasterio.MemoryFile() as memfile:
                 with memfile.open(**DEM_PROFILE) as temp_dst:
-                    temp_dst.write(resampled_data, 1)
+                    temp_dst.write(destination_array, 1)
 
                     # Mask the data to the province boundary
                     masked_data, masked_transform = mask(
                         temp_dst,
-                        province_shp_sel_reproj.geometry,
+                        province_shp_proj.geometry,
                         crop=True,
                         nodata=NO_DATA_VALUE)
 
@@ -226,12 +237,17 @@ for var in T_VARS:
                         "width": masked_data.shape[2],
                         "transform": masked_transform,
                     })
+            # Apply lapse rate correction based on elevation difference
+            no_data_mask = masked_data != NO_DATA_VALUE
+            final_data = np.where(
+                no_data_mask, masked_data + DEM_DATA * T_LAPSE_RATE, NO_DATA_VALUE)
 
             # Save the masked data to anew_results_subdirle
-            output_path = os.path.join(new_results_subdir, f"{month_name}.tif")
+            output_path = os.path.join(
+                new_results_subdir, f"{var}_{p_str}perc_{month_name}.tif")
             with rasterio.open(output_path, 'w', **masked_profile) as dst:
-                dst.write(masked_data.astype(rasterio.float32))
+                dst.write(final_data)
             os.remove(temp_path)
 
-    print(f"Saved all results vor {var}")
+    print(f"Saved all results for {var}")
 print("Temperature percentiles processing complete!")

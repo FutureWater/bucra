@@ -17,7 +17,7 @@ This script processes Soil Nutrient Content (SNC) data by:
 """
 
 ####################################################################################################
-########################## Define directories and file paths #######################################
+###################### Define directories, constants and file paths ################################
 ####################################################################################################
 # Define directories and file paths
 current_wd = os.getcwd()
@@ -56,14 +56,8 @@ VAR_NAMES = [os.path.basename(file) for file in INPUT_FILES]
 VAR_NAMES_2 = [name.replace("af", f"{PROVINCE_NAME}_") for name in VAR_NAMES]
 
 ####################################################################################################
-################################# Process SNC files ################################################
+####################### Loading DEM and province shapefile #########################################
 ####################################################################################################
-# Load province shapefile
-provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
-provinces_shp = gpd.read_file(provinces_filepath)
-province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
-
-
 # Load reference DEM
 print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
@@ -76,14 +70,17 @@ with rasterio.open(DEM_PATH) as dem_src:
     DEM_WIDTH = dem_src.width
     DEM_PROFILE = dem_src.profile
 
-# Set province boundary to DEM crs and create a buffer
-print("Creating buffer around province...")
+# Load province shapefile
+provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
+provinces_shp = gpd.read_file(provinces_filepath)
+province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
-province_buffer = province_shp_proj.buffer(500)  # Buffer of 500 meters
 
-
+####################################################################################################
+################################# Process SNC files ################################################
+####################################################################################################
 # Process each SNC file
-for i, (input_file, output_name) in enumerate(zip(INPUT_FILES[:1], VAR_NAMES_2[:1])):
+for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
     print(
         f"Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
 
@@ -105,7 +102,7 @@ for i, (input_file, output_name) in enumerate(zip(INPUT_FILES[:1], VAR_NAMES_2[:
             dst_transform=DEM_TRANSFORM,
             dst_crs=DEM_CRS,
             resampling=Resampling.bilinear,
-            src_nodata=NO_DATA_VALUE,
+            src_nodata=src.nodata,
             dst_nodata=NO_DATA_VALUE
         )
 

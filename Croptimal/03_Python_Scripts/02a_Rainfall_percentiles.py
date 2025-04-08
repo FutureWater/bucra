@@ -39,19 +39,9 @@ RES = 250  # Resolution in meters
 P_PERC = [0.05, 0.25]  # Percentiles to calculate (5% and 25%)
 NO_DATA_VALUE = -9999.0  # No data value
 
-# Get input rainfall files
-input_files = glob.glob(os.path.join(
-    DATA_DIR, "Rainfall", "Monthly_Sum", "*.tif"))
-if not input_files:
-    raise FileNotFoundError(
-        f"No rainfall files found in {os.path.join(DATA_DIR, 'Rainfall', 'Monthly_Sum')}")
-
-print(f"Found {len(input_files)} rainfall files")
-
-# Extract month numbers from filenames
-months_stack = [int(os.path.basename(file)[5:7]) for file in input_files]
-
-
+####################################################################################################
+####################### Loading DEM and province shapefile #########################################
+####################################################################################################
 # Load reference DEM
 print("Loading reference DEM...")
 dem_path = os.path.join(
@@ -69,11 +59,23 @@ provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 province_shp_sel_reproj = province_shp_sel.to_crs(DEM_CRS)
-province_buffer = province_shp_sel.buffer(500)  # Buffer of 0.25 degrees
+
 
 ####################################################################################################
 ########################## Process each percentile ################################################
 ####################################################################################################
+# Get input rainfall files
+input_files = glob.glob(os.path.join(
+    DATA_DIR, "Rainfall", "Monthly_Sum", "*.tif"))
+if not input_files:
+    raise FileNotFoundError(
+        f"No rainfall files found in {os.path.join(DATA_DIR, 'Rainfall', 'Monthly_Sum')}")
+
+print(f"Found {len(input_files)} rainfall files")
+
+# Extract month numbers from filenames
+months_stack = [int(os.path.basename(file)[5:7]) for file in input_files]
+
 # Process each percentile
 for p_p in P_PERC:
     # Generate directory name by removing decimal point from percentile value
