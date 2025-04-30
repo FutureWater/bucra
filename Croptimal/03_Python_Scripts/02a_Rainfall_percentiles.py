@@ -26,7 +26,7 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -45,7 +45,8 @@ NO_DATA_VALUE = -9999.0  # No data value
 # Load reference DEM
 print("Loading reference DEM...")
 dem_path = os.path.join(
-    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 with rasterio.open(dem_path) as dem_src:
     DEM_META = dem_src.meta.copy()
     DEM_TRANSFORM = dem_src.transform
@@ -54,7 +55,6 @@ with rasterio.open(dem_path) as dem_src:
     DEM_PROFILE = dem_src.profile
 
 # Load province shapefile
-print("Loading province shapefile...")
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
@@ -84,7 +84,7 @@ for p_p in P_PERC:
                                       "Rainfall", "Percentiles", f"{p_str}perc")
     os.makedirs(new_results_subdir, exist_ok=True)
 
-    print(f"Processing {p_p*100}% percentile...")
+    print(f"Processing rainfall data for {p_p*100}% percentile...")
 
     # Dictionary to store percentile results for each month
     out_layers = {}

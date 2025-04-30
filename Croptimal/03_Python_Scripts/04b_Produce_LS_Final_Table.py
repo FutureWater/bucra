@@ -5,7 +5,7 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 import numpy as np
-from rasterstats import zonal_stats
+import rioxarray
 
 """
 This script produces land suitability tables for communes by:
@@ -14,40 +14,49 @@ This script produces land suitability tables for communes by:
 3) Creating both descriptive recommendation tables and numerical suitability value tables
 4) Saving these tables as CSV files for each climate scenario combination
 """
+####################################################################################################
+###################### Define directories, constants and file paths ################################
+####################################################################################################
+# Define current and parent working directories
+current_wd = os.getcwd()
+parent_wd = os.path.dirname(current_wd)
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
+
+# Gets province from subprocess in 000_Run_All.py
+PROVINCE_NAME = os.environ.get("PROVINCE")
+PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+
+# Define other folders
+DATA_DIR = os.path.join(angola_wd, "01_Data")
+GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+LS_RESULTS = os.path.join(RESULTS_DIR, '_LS_Results')
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
 
 # Define constants
-RESULTS_DIR = "your_results_directory"  # Replace with actual path
-PROVINCE_NAME = "your_province_name"  # Replace with actual province name
-# Replace with actual province list
-PROVINCES_NAMES = ["province1", "province2", "province3"]
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = 0  # No data value
+LOCAL_PROJ = "EPSG:32733"
 
 # Define climate scenario combinations
-UNIQUE_COMBIS = ["Dry_Cold", "Dry_Cool", "Dry_Average",
-                 "Normal_Cold", "Normal_Cool", "Normal_Average",
-                 "Average_Cold", "Average_Cool", "Average_Average"]
+UNIQUE_COMBIS = ["Dry_Warm", "Dry_Much_Warmer", "Dry_Average",
+                 "Normal_Warm", "Normal_Much_Warmer", "Normal_Average",
+                 "Much_Drier_Warmer", "Much_Drier_Much_Warmer", "Much_Drier_Average",]
 
 # Create output directory
-new_dir = os.path.join(RESULTS_DIR, "_LS_Results", "_Communes")
-os.makedirs(new_dir, exist_ok=True)
+new_results_subdir = os.path.join(RESULTS_DIR, "_LS_Results", "_Communes")
+os.makedirs(new_results_subdir, exist_ok=True)
 
-# Load commune data for the current province
-communes_df = pd.read_csv(os.path.join(
-    RESULTS_DIR, "communes.csv"))  # Adjust path as needed
-province_communes = communes_df[communes_df['Province'] == PROVINCE_NAME]
-
-# Load commune shapefile
-communes_shp = gpd.read_file(os.path.join(
-    RESULTS_DIR, "communes.shp"))  # Adjust path as needed
-province_communes_shp = communes_shp[communes_shp['NAME_1'].str.replace(
-    ' ', '_') == PROVINCE_NAME]
-
-# Load crop calendar
-cropping_cal = pd.read_csv(os.path.join(
-    RESULTS_DIR, "cropping_calendar.csv"))  # Adjust path as needed
+# Load communes shapefile
+COMMUNES_FILE = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
+commune_shp = gpd.read_file(COMMUNES_FILE)
+commune_shp_sel = commune_shp[commune_shp["NAME_1"] == PROVINCE_NAME]
+commune_shp_proj = commune_shp_sel.to_crs(LOCAL_PROJ)
 
 # Find all land suitability rasters
 all_results = glob.glob(os.path.join(
-    RESULTS_DIR, "**", f"Land_Suitability*{PROVINCE_NAME}*.tif"), recursive=True)
+    LS_RESULTS, "Weighted", f"Land_Suitability*.tif"), recursive=True)
 
 # Initialize dictionaries to store dataframes for each combination
 communes_csv_dict = {}
@@ -57,20 +66,25 @@ communes_ls_values_dict = {}
 print(f"Calculating zonal statistics for {len(all_results)} raster files...")
 
 # Create a combined dataframe to hold all results
-mean_all_results_commune = pd.DataFrame()
+mean_all_results_commune = pd.DataFrame(commune_shp_proj["NAME_3"],)
 
-# Process each raster file to get commune-level mean suitability result for each crop
+###############################################################################################
+##### Process each raster file to get commune-level mean suitability result for each crop #####
+###############################################################################################
 for raster_file in all_results:
     # Extract the basename without extension for the column name
-    file_basename = os.path.basename(raster_file).replace('.tif', '')
+    file_basename = os.path.basename(raster_file).replace('.tif', '')[17:]
 
-    # Calculate zonal statistics for this raster
-    stats = zonal_stats(
-        province_communes_shp,
-        raster_file,
-        stats="mean",
-        geojson_out=True
-    )
+    # Calculate zonal stats
+    with rioxarray.open_rasterio(raster_file) as raster:
+        column_name = file_basename
+        for idx, row in commune_shp_proj.iterrows():
+            commune_name = row['NAME_3']
+
+            # Clip raster to commune geometry and calculate mean
+            clipped = raster.rio.clip([row.geometry], drop=False)
+            mean_value = float(clipped.mean())
+            results[commune_name][column_name] = mean_value
 
     # Extract statistics into a dictionary
     commune_means = {}
@@ -94,9 +108,10 @@ for comb in UNIQUE_COMBIS:
     else:
         # Load existing dataframes if not first province
         try:
-            communes_csv_path = os.path.join(new_dir, f"{comb}_Communes.csv")
+            communes_csv_path = os.path.join(
+                new_results_subdir, f"{comb}_Communes.csv")
             communes_ls_values_path = os.path.join(
-                new_dir, f"{comb}_Communes_LS_values.csv")
+                new_results_subdir, f"{comb}_Communes_LS_values.csv")
 
             if os.path.exists(communes_csv_path) and os.path.exists(communes_ls_values_path):
                 communes_csv_dict[comb] = pd.read_csv(communes_csv_path)
@@ -197,13 +212,13 @@ if PROVINCE_NAME == PROVINCES_NAMES[-1]:
     for comb in UNIQUE_COMBIS:
         # Save recommendation tables
         communes_csv_dict[comb].to_csv(
-            os.path.join(new_dir, f"{comb}_Communes.csv"),
+            os.path.join(new_results_subdir, f"{comb}_Communes.csv"),
             index=False, quoting=3  # QUOTE_NONE in pandas
         )
 
         # Save numerical value tables
         communes_ls_values_dict[comb].to_csv(
-            os.path.join(new_dir, f"{comb}_Communes_LS_values.csv"),
+            os.path.join(new_results_subdir, f"{comb}_Communes_LS_values.csv"),
             index=False, quoting=3  # QUOTE_NONE in pandas
         )
 

@@ -120,7 +120,7 @@ for _, crop_row in CROPPING_CAL.iterrows():
             ndvi_file = find_file(input_files_ndvi, ndvi_pattern)
             if not ndvi_file:
                 print(
-                    f"NDVI file not found for {crop}, {start_month}-{end_month}")
+                    f"  NDVI file not found for {crop}, {start_month}-{end_month}")
                 continue
 
             # Temperature
@@ -128,7 +128,7 @@ for _, crop_row in CROPPING_CAL.iterrows():
             temp_files = [
                 f for f in input_files_temperature if per_t in f and temp_pattern in f]
             if not temp_files:
-                print(f"Temperature file not found for {crop}, {per_t}")
+                print(f"    Temperature file not found for {crop}, {per_t}")
                 continue
 
             # Water
@@ -136,7 +136,7 @@ for _, crop_row in CROPPING_CAL.iterrows():
             water_files = [
                 f for f in input_files_water if per_p in f and water_pattern in f]
             if not water_files:
-                print(f"Water file not found for {crop}, {per_p}")
+                print(f"    Water file not found for {crop}, {per_p}")
                 continue
 
             # Find soil and slope files
@@ -147,7 +147,7 @@ for _, crop_row in CROPPING_CAL.iterrows():
             slope_file = find_file(input_files_slope, "lower")
 
             if not all([potassium_file, phosphorus_file, slope_file]):  # ksat_file, wcavail_file,
-                print(f"One or more soil/slope files not found")
+                print(f"    One or more soil/slope files not found")
                 continue
 
             # Get weights from parameters table

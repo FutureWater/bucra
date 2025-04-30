@@ -50,7 +50,7 @@ PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 ####################################################################################################
 ############## Process each parameter folder ##############
 for folder in PARAMS['LS_Results_Folder'].unique():
-    "Processing other suitability parameters..."
+    print("Processing other suitability parameters...")
     # Get parameters for this folder
     folder_mask = PARAMS['LS_Results_Folder'] == folder
     parameters = PARAMS.loc[folder_mask, 'Parameter'].tolist()
@@ -144,14 +144,14 @@ for folder in PARAMS['LS_Results_Folder'].unique():
 
     ############## Process soil nutrient content ##############
     elif folder == "Soil_Nutrient_Content":
-        print(f"Processing {folder}...")
+        print(f"    Processing {folder}...")
 
         # Get files
         snc_files = glob.glob(os.path.join(
             RESULTS_DIR, "Soil_Nutrient_Content", "*.tif"))
 
         # Process each parameter
-        for i, param in enumerate(parameters[:1]):
+        for i, param in enumerate(parameters):
             abrev = abrevs[i]
             limit = limits[i]
             unit = units[i]

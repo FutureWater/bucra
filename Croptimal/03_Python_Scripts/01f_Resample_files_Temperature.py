@@ -10,6 +10,7 @@ from rasterio.mask import mask
 from rasterio.transform import from_origin
 import matplotlib.pyplot as plt
 
+
 """
 This script processes temperature data files by:
 1. Reading monthly temperature data from NetCDF files
@@ -28,9 +29,10 @@ current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
+
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -55,7 +57,8 @@ month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
 # print("Loading reference DEM...")
 # Load reference DEM
 dem_path = os.path.join(RESULTS_DIR, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Used to be "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+                        # Used to be "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
 with rasterio.open(dem_path) as dem_src:
     DEM_DATA = dem_src.read(1)
@@ -66,7 +69,6 @@ with rasterio.open(dem_path) as dem_src:
     DEM_WIDTH = dem_src.width
     DEM_PROFILE = dem_src.profile
 # Load province shapefile and set to crs of DEM
-print("Loading province shapefile...")
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]

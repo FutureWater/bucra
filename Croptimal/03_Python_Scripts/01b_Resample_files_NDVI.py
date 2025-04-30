@@ -31,7 +31,7 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Set directories
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -56,7 +56,6 @@ NAMES_RASTER = [os.path.basename(f) for f in INPUT_FILES]
 # Import DEM for reference extent and resolution
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
-print(f"Loading reference DEM: {DEM_PATH}")
 with rasterio.open(DEM_PATH) as dem_src:
     DEM_PROFILE = dem_src.profile.copy()
     DEM_BOUNDS = dem_src.bounds
@@ -79,7 +78,7 @@ province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
 print("Resampling NDVI files...")
 for i, input_file in enumerate(INPUT_FILES):
     print(
-        f"  Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
+        f"      Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
 
     with rasterio.open(input_file) as src:
         temp_data = src.read(1)

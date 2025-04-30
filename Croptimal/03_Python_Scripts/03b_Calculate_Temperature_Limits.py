@@ -193,6 +193,6 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
                 f"  Created temperature suitability map for {crop_name}, {season_label}, {per}")
         else:
             print(
-                f"Missing temperature data for {crop_name}, {season_label}, {per}")
+                f"  Missing temperature data for {crop_name}, {season_label}, {per}")
 
 print("Temperature limits calculation complete!")

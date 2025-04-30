@@ -31,7 +31,7 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -49,9 +49,9 @@ NO_DATA_VALUE = -9999.0  # No data value
 T_LAPSE_RATE = -0.0065  # Temperature lapse rate (°C/m)
 
 # Load reference DEM
-print("Loading reference DEM...")
 dem_path = os.path.join(
-    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 with rasterio.open(dem_path) as dem_src:
     DEM_DATA = dem_src.read(1)
     DEM_PROFILE = dem_src.profile.copy()
@@ -62,7 +62,6 @@ with rasterio.open(dem_path) as dem_src:
     DEM_WIDTH = dem_src.width
 
 # Load province shapefile
-print("Loading province shapefile...")
 provinces_filepath = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]

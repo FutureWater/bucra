@@ -18,7 +18,7 @@ import pandas as pd
 import requests
 
 # Initialize Google Earth Engine with authentication
-ee.Authenticate()
+ee.Authenticate(force=True)
 ee.Initialize()
 
 # Fetch farmer field data from the API
@@ -159,7 +159,7 @@ for farmer in response_api.json()[:1]:
     beginning_date = ee.Date("2021-12-31")
     millis_in_day = 24 * 60 * 60 * 1000  # Milliseconds in a day
 
-    # Load required Earth Engine datasets
+    ############# Load required Earth Engine datasets #####################
     # Reference Evapotranspiration
     wapor_ret = ee.ImageCollection("FAO/WAPOR/2/L1_RET_E")
     # Global Precipitation
@@ -169,6 +169,7 @@ for farmer in response_api.json()[:1]:
     # Digital Elevation Model
     dem = ee.Image("NASA/NASADEM_HGT/001")
 
+    ############ Filter WAPOR data for the field area ####################
     # Create buffer around field point for spatial analysis (30m radius)
     clip_geometry = field_point.buffer(30)
 
@@ -178,21 +179,21 @@ for farmer in response_api.json()[:1]:
         clipped = image.clip(clip_geometry)
         return clipped
 
-    # Filter WAPOR data for historical date range and clip to field area
+    # Filter RET data for historical date range and clip to field area
     wapor_filtered = wapor_ret.filterDate(
         historical_start_date, historical_end_date).map(clip_image)
 
-    # Function to correct WAPOR values (divide by 10) and add as a new band
+    # Function to correct RET values (divide by 10) and add as a new band
     def correct_wapor_values(img):
         """Correct WAPOR evapotranspiration values by dividing by 10."""
         corrected = img.select("L1_RET_E").divide(10).rename("corrected")
         return img.addBands(corrected)
 
-    # Apply correction to all WAPOR images
+    # Apply correction to all RET images
     wapor_corrected = wapor_filtered.map(correct_wapor_values)
 
     # Function to calculate daily average WAPOR values for a specific day of year
-    def calculate_wapor_daily_avg(day_of_year):
+    def calculate_avg_daily_RET(day_of_year):
         """
         Calculate the mean WAPOR value for a specific day of year across multiple years.
         Returns a single value representing the average for that day of year.
@@ -212,15 +213,15 @@ for farmer in response_api.json()[:1]:
         return ee.Number(mean_wapor)
 
     # Create a collection of daily average WAPOR values for each day of the year
-    wapor_by_day = ee.ImageCollection(
-        days_of_year.map(calculate_wapor_daily_avg))
+    avg_RET_by_day = ee.ImageCollection(
+        days_of_year.map(calculate_avg_daily_RET))
 
     print(crop_type)  # Print crop type for debugging
 
+    # -------------------------------------------------------------------------------
     # Historical Crop Schedule - Calculate irrigation needs for entire growing season
-    # -----------------------------------------------------------------------------
-
-    # Calculate reference ET for the entire growing season
+    # -------------------------------------------------------------------------------
+    # Cnvert season start and end date (date type) to a number in milliseconds
     season_start_millis = season_dev_start.millis()
     season_end_millis = season_end.millis()
 
@@ -234,11 +235,11 @@ for farmer in response_api.json()[:1]:
         season_start_millis, season_end_millis, millis_in_day).map(milliseconds_to_day_of_year)
 
     # Calculate historical average reference ET for each day in the growing season
-    wapor_ref_seasonal = ee.ImageCollection(
-        days_in_season.map(calculate_wapor_daily_avg))
+    RET_growing_season = ee.ImageCollection(
+        days_in_season.map(calculate_avg_daily_RET))
 
     # Function to process ET reference values (round to 2 decimals)
-    def process_et_ref(image):
+    def round_to_2_decimals(image):
         """Process ET reference values by rounding to 2 decimal places."""
         return (
             image.multiply(100)
@@ -248,25 +249,26 @@ for farmer in response_api.json()[:1]:
             .set("DOY", image.get("DOY"))
         )
 
-    et_ref_processed = wapor_ref_seasonal.map(process_et_ref)
+    et_ref_processed = RET_growing_season.map(round_to_2_decimals)
 
     # Function to add the Date property to each image (days from planting date)
-    def add_date_from_planting(img):
+    def add_millisecond_date(img):
         """Add Date property to image based on days from planting date."""
         day_index = ee.Number.parse(img.get("system:index"))
         date_val = planting_date.advance(day_index, "day")
         return img.set("Date", date_val)
 
-    et_ref_with_date = et_ref_processed.map(add_date_from_planting)
+    et_ref_with_date = et_ref_processed.map(add_millisecond_date)
 
     # Select the corrected band and rename it
     et_ref_renamed = et_ref_with_date.select(
         ["corrected"], ["1 ETref in mm/day"])
 
-    # Calculate ET for each growth stage (development, mid-season, end)
+    # ---------------------------------------------------------------------
+    # Calculate ETc for each growth stage (development, mid-season, end)
     # ---------------------------------------------------------------------
 
-    # DEVELOPMENT STAGE ET CALCULATION
+    ####### DEVELOPMENT STAGE ET CALCULATION #######
     dev_start_millis = season_dev_start.millis()
     dev_end_millis = season_dev_end.millis()
 
@@ -276,7 +278,7 @@ for farmer in response_api.json()[:1]:
 
     # Get WAPOR values for development stage days
     wapor_dev_stage = ee.ImageCollection(
-        days_in_dev_stage.map(calculate_wapor_daily_avg))
+        days_in_dev_stage.map(calculate_avg_daily_RET))
 
     # Apply kc_initial to the development stage ET values
     def apply_kc_initial(image):
@@ -301,7 +303,7 @@ for farmer in response_api.json()[:1]:
 
     et_dev_with_date = et_dev_stage.map(add_dev_stage_date)
 
-    # MID-SEASON STAGE ET CALCULATION
+    ####### MID-SEASON STAGE ET CALCULATION #######
     mid_start_millis = season_mid_start.millis()
     mid_end_millis = season_mid_end.millis()
 
@@ -311,7 +313,7 @@ for farmer in response_api.json()[:1]:
 
     # Get WAPOR values for mid-season stage days
     wapor_mid_stage = ee.ImageCollection(
-        days_in_mid_stage.map(calculate_wapor_daily_avg))
+        days_in_mid_stage.map(calculate_avg_daily_RET))
 
     # Apply kc_mid to the mid-season stage ET values
     def apply_kc_mid(image):
@@ -336,7 +338,7 @@ for farmer in response_api.json()[:1]:
 
     et_mid_with_date = et_mid_stage.map(add_mid_stage_date)
 
-    # END STAGE ET CALCULATION
+    ####### END STAGE ET CALCULATION ######
     end_start_millis = season_end_start.millis()
     end_end_millis = season_end.millis()
 
@@ -346,7 +348,7 @@ for farmer in response_api.json()[:1]:
 
     # Get WAPOR values for end stage days
     wapor_end_stage = ee.ImageCollection(
-        days_in_end_stage.map(calculate_wapor_daily_avg))
+        days_in_end_stage.map(calculate_avg_daily_RET))
 
     # Apply kc_late to the end stage ET values
     def apply_kc_late(image):
@@ -371,11 +373,12 @@ for farmer in response_api.json()[:1]:
 
     et_end_with_date = et_end_stage.map(add_end_stage_date)
 
-    # Merge ET from all three stages
+    ####### Merge ET from all three stages ######
     et_merged = et_dev_with_date.merge(et_mid_with_date)
     et_all_stages = et_merged.merge(et_end_with_date)  # mm per day
     et_all_renamed = et_all_stages.select(["corrected"], ["2 ETc in mm/day"])
 
+    # ---------------------------------------------
     # Calculate irrigation needs based on ET values
     # ---------------------------------------------
 
@@ -453,8 +456,9 @@ for farmer in response_api.json()[:1]:
     # Merge joined images (125 days of the season)
     historical_schedule = inner_join.map(merge_joined_images)
 
+    # ------------------------------------------------
     # Convert EE images to tabular data for API
-    # -----------------------------------------
+    # ------------------------------------------------
 
     def extract_field_means(img):
         """
@@ -563,8 +567,9 @@ for farmer in response_api.json()[:1]:
         url_post, headers=headers_post, data=historical_json)
     print(response_post.json())
 
+    # --------------------------------------------------------------
     # HINDCAST CALCULATION - Recent and current irrigation needs
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
     # Use recent data to provide current irrigation recommendations
 
     # Get TAHMO weather station data if available
@@ -638,7 +643,7 @@ for farmer in response_api.json()[:1]:
 
         # Create images with the structure of WAPOR but values from TAHMO
         tahmo_hindcast = ee.ImageCollection(
-            hindcast_days.map(calculate_wapor_daily_avg))
+            hindcast_days.map(calculate_avg_daily_RET))
 
         # Zip WAPOR structure with TAHMO values
         max_elements = 1000
@@ -908,10 +913,13 @@ for farmer in response_api.json()[:1]:
         cfsv2_et = cfsv2_combined.map(calculate_et0_penman_monteith)
         cfsv2_et_reference = cfsv2_et.select("1 ETref in mm/day")
 
+    # ------------------------------------------------------------------------
     # Create Kc values for each growth stage to multiply with ET reference
+    # ------------------------------------------------------------------------
     # These are used for both TAHMO and CFSv2 methods
 
     # Development stage Kc values
+
     def create_kc_dev(image):
         """Create an image with the initial stage Kc value."""
         return (

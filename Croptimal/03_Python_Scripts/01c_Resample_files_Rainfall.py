@@ -30,7 +30,7 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Set input data directories
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -51,9 +51,9 @@ os.makedirs(RESULTS_RAINFALL_DIR, exist_ok=True)
 ####################################################################################################
 ####################### Loading DEM and province shapefile #########################################
 ####################################################################################################
-print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
+                        # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif". But currently not using the difference tif. Maybe needed in the future. Then also change it in 01b file.
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
 with rasterio.open(DEM_PATH) as dem_src:
     DEM_TRANSFORM = dem_src.transform
@@ -63,7 +63,6 @@ with rasterio.open(DEM_PATH) as dem_src:
     DEM_PROFILE = dem_src.profile
 
 # Load province shapefile (EPSG:4326) and reproject
-print("Loading province shapefile...")
 provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
 province_shp_sel = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
 province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
@@ -90,7 +89,7 @@ def extract_month(filename):
             return clean_name[5:7]  # 6-7th characters (0-indexed)
         except IndexError:
             print(
-                f"Warning: Could not extract month from filename: {basename}")
+                f"  Warning: Could not extract month from filename: {basename}")
             return None
 # --------
 
@@ -123,7 +122,7 @@ MEAN_RAINFALL_PROFILES = []
 
 for month_idx, month in sorted([(int(k), k) for k in MONTHLY_GROUPS.keys()]):
     files = MONTHLY_GROUPS[month]
-    print(f"  Processing month {month} ({len(files)} files)")
+    print(f"    Processing month {month} ({len(files)} files)")
 
     # Read all files for this month
     month_data = []
@@ -154,7 +153,7 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     # Get month name and index
     month_idx = i + 1  # 1-based month index
     month_name = MONTH_ABBRS[i]
-    print(f"Processing {month_name}...")
+    print(f"    Processing {month_name}...")
 
     # We need to create a temporary raster to perform masking
     # since we have the data as numpy arrays, not as raster files
@@ -214,6 +213,6 @@ for i, (month_data, month_profile) in enumerate(zip(MEAN_RAINFALL_DATA, MEAN_RAI
     try:
         os.remove(TEMP_RASTER_PATH)
     except Exception as e:
-        print(f"  Warning: Could not remove temporary files: {e}")
+        print(f"Warning: Could not remove temporary files: {e}")
 
 print("Rainfall resampling complete!")

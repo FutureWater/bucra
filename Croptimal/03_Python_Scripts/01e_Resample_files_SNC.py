@@ -26,7 +26,7 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
 
 # Set directories
 DATA_DIR = os.path.join(angola_wd, "01_Data")
@@ -59,9 +59,9 @@ VAR_NAMES_2 = [name.replace("af", f"{PROVINCE_NAME}_") for name in VAR_NAMES]
 ####################### Loading DEM and province shapefile #########################################
 ####################################################################################################
 # Load reference DEM
-print("Loading reference DEM...")
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM",
-                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+                        # used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+                        f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 with rasterio.open(DEM_PATH) as dem_src:
     DEM_META = dem_src.meta.copy()
     DEM_TRANSFORM = dem_src.transform
@@ -82,7 +82,7 @@ province_shp_proj = province_shp_sel.to_crs(DEM_CRS)
 # Process each SNC file
 for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
     print(
-        f"Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
+        f"  Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
 
     # Read input file
     with rasterio.open(input_file) as src:

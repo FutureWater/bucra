@@ -9,7 +9,6 @@ from rasterio.transform import from_origin
 from rasterio.plot import show
 # import rioxarray
 import geopandas as gpd
-import netCDF4 as nc
 import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -44,6 +43,8 @@ TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 RES = 250  # Set resolution in meters
 SRC_CRS = "EPSG:4326"  # CRS from Netcdf files
 NO_DATA_VALUE = -9999.0
+DEM_PATH = os.path.join(
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Path to DEM file
 
 # Define input and output paths
 INPUT_FILES = glob.glob(os.path.join(DATA_DIR, "Ref_ET/*ymonmean.nc"))
@@ -71,6 +72,7 @@ province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 ####################################################################################################
 ################################# Read and process NetCDF data ######################################
 ####################################################################################################
+print("Opening RET files and calculating monthly mean RET")
 # Multiplier for days in each month
 MULTIPLIER = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
 
@@ -86,12 +88,13 @@ with xr.open_dataset(INPUT_FILES[0]) as ds:
 
 # Read resampled DEM raster and get profile
 DEM_PATH = os.path.join(
-    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    # Used to be: "DEM_{PROVINCE_NAME}_{RES}m_diff.tif"
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
 ####################################################################################################
 ################################# Resample ET raster to match DEM ##################################
 ####################################################################################################
-print(f"Writing final ET raster: {REF_ET_RESULTS_DIR, PROVINCE_NAME}")
+print(f"Resampling ET raster: {REF_ET_RESULTS_DIR, PROVINCE_NAME}")
 MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
 
 for i, month in enumerate(MONTH_ABBRS):
