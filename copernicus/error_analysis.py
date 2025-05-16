@@ -1,3 +1,4 @@
+# %%
 from utils import load_copernicus_data
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -38,30 +39,61 @@ abs_error_leadtime.t2m.plot()
 ## Spatial MAE for all leadtimes
 abs_error_map = abs_error.mean(dim=("time"))
 
+
 # TODO: Turn into function, feed non-bias-adjusted and bias-adjusted
-fig, axes = plt.subplots(
-    2, 3, figsize=(25, 10), subplot_kw={"projection": ccrs.PlateCarree()}
-)
-forecast_months = range(1, 7)
-fig.suptitle(
-    "MAE (K) for all lead-times, non-bias-adjusted", fontsize=30, fontweight="bold"
-)
-for i, forecast_month in enumerate(forecast_months):
-    ax = axes[i // 3, i % 3]
-    cbar = (
-        abs_error_map.t2m.sel(forecastMonth=forecast_month)
-        .plot(
-            ax=ax,
-            transform=ccrs.PlateCarree(),
-            vmin=0,
-            vmax=12,
-        )
-        .colorbar
+def plot_spatial_mae(data, suptitle):
+    fig, axes = plt.subplots(
+        2, 3, figsize=(25, 10), subplot_kw={"projection": ccrs.PlateCarree()}
     )
-    cbar.ax.tick_params(labelsize=16)
-    # cbar.ax.set_ylabel("MAE (K)", fontsize=18)
-    cbar.ax.set_ylabel("")
-    ax.set_title(f"Lead-time (months): {forecast_month}", fontsize=24)
-    ax.add_feature(cfeature.BORDERS, linestyle="--", edgecolor="black")
-    ax.add_feature(cfeature.COASTLINE, edgecolor="black")
-plt.show()
+    forecast_months = range(1, 7)
+    fig.suptitle(suptitle, fontsize=30, fontweight="bold")
+    for i, forecast_month in enumerate(forecast_months):
+        ax = axes[i // 3, i % 3]
+        cbar = (
+            data.t2m.sel(forecastMonth=forecast_month)
+            .plot(
+                ax=ax,
+                transform=ccrs.PlateCarree(),
+                vmin=0,
+                vmax=12,
+            )
+            .colorbar
+        )
+        cbar.ax.tick_params(labelsize=16)
+        cbar.ax.set_ylabel("")
+        ax.set_title(f"Lead-time (months): {forecast_month}", fontsize=24)
+        ax.add_feature(cfeature.BORDERS, linestyle="--", edgecolor="black")
+        ax.add_feature(cfeature.COASTLINE, edgecolor="black")
+    plt.show()
+
+
+# fig, axes = plt.subplots(
+#     2, 3, figsize=(25, 10), subplot_kw={"projection": ccrs.PlateCarree()}
+# )
+# forecast_months = range(1, 7)
+# fig.suptitle(
+#     "MAE (K) for all lead-times, non-bias-adjusted", fontsize=30, fontweight="bold"
+# )
+# for i, forecast_month in enumerate(forecast_months):
+#     ax = axes[i // 3, i % 3]
+#     cbar = (
+#         abs_error_map.t2m.sel(forecastMonth=forecast_month)
+#         .plot(
+#             ax=ax,
+#             transform=ccrs.PlateCarree(),
+#             vmin=0,
+#             vmax=12,
+#         )
+#         .colorbar
+#     )
+#     cbar.ax.tick_params(labelsize=16)
+#     # cbar.ax.set_ylabel("MAE (K)", fontsize=18)
+#     cbar.ax.set_ylabel("")
+#     ax.set_title(f"Lead-time (months): {forecast_month}", fontsize=24)
+#     ax.add_feature(cfeature.BORDERS, linestyle="--", edgecolor="black")
+#     ax.add_feature(cfeature.COASTLINE, edgecolor="black")
+# plt.show()
+
+#######################
+### BIAS ADJUSTMENT ###
+#######################

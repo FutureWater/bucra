@@ -57,8 +57,9 @@ request = {
     "leadtime_month": ["1", "2", "3", "4", "5", "6"],
     "data_format": "grib",
     "product_type": ["monthly_mean"],
-    "area": [35, 25, 28, 35],
+    "area": [31.8, 28.4, 28, 31.4],
 }
+target = "GRIB_data/ECCC_hindcast_projections.grib"
 
 client = cdsapi.Client()
-client.retrieve(dataset, request).download()
+client.retrieve(dataset, request, target)

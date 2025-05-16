@@ -34,8 +34,9 @@ request = {
     "data_format": "grib",
     "download_format": "unarchived",
     "variable": ["2m_temperature"],
-    "area": [35, 25, 28, 35],
+    "area": [31.8, 28.4, 28, 31.4],
 }
+target = "GRIB_data/reanalysis_hindcast_copernicus.grib"
 
 client = cdsapi.Client()
-client.retrieve(dataset, request).download()
+client.retrieve(dataset, request, target)

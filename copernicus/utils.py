@@ -36,10 +36,10 @@ def load_copernicus_data(data_path, st_dim_name="time"):
 #       Copy numlonlat data from (current month - leadtime) in ds and overwrite in copy of ds.
 
 
-def reshape_projections(data):
+def reshape_projections(data, drop):
     """
     # Reshape Dataset for Forecast Alignment
-
+    ### **! Important !** Removes a number of entries from the start of the data equal to the number of leadtimes! \n
     Aligns forecast months with the corresponding time indices in the dataset, so selecting a month
     and a lead-time (x) will always yield the selected month predicted from x months into the past.
     ## Parameters:
