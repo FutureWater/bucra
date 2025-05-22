@@ -1,7 +1,8 @@
+# %%
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from ibicus.debias import QuantileMapping
+from ibicus.debias import QuantileMapping, ISIMIP, QuantileDeltaMapping
 import xarray as xr
 import numpy as np
 import pandas as pd
@@ -13,8 +14,8 @@ import seaborn as sns
 #################
 reanalysis_hindcast_netcdf_path = "NetCDF_data/reanalysis_hindcast_copernicus.nc"
 reanalysis_validation_netcdf_path = "NetCDF_data/reanalysis_validation_copernicus.nc"
-projections_hindcast_netcdf_path = "NetCDF_data/ECCC_hindcast_projections.nc"
-projections_validation_netcdf_path = "NetCDF_data/ECCC_validation_projections.nc"
+projections_hindcast_netcdf_path = "NetCDF_data/ECMWF_hindcast_projections.nc"
+projections_validation_netcdf_path = "NetCDF_data/ECMWF_validation_projections.nc"
 
 reanalysis_hindcast_ds = xr.open_dataset(reanalysis_hindcast_netcdf_path)
 reanalysis_validation_ds = xr.open_dataset(reanalysis_validation_netcdf_path)
@@ -43,14 +44,30 @@ projections_validation_np = projections_validation_ds[
 #######################
 ### BIAS ADJUSTMENT ###
 #######################
-QM_debiaser = QuantileMapping.from_variable("tas")
+def apply_debiaser(debiaser):
+    output = np.empty_like(projections_validation_np)
+    for i, _ in enumerate(projections_hindcast_ds.forecastMonth):
+        output[i] = debiaser.apply(
+            reanalysis_hindcast_np,
+            projections_hindcast_np[i],
+            projections_validation_np[i],
+        )
+    return output
 
-QM_val = [None] * len(projections_hindcast_ds.forecastMonth)
-QM_val = np.empty_like(projections_validation_np)
-for i, _ in enumerate(projections_hindcast_ds.forecastMonth):
-    QM_val[i] = QM_debiaser.apply(
-        reanalysis_hindcast_np, projections_hindcast_np[i], projections_validation_np[i]
-    )
+
+# Quartile Mapping adjustment (good base)
+QM_debiaser = QuantileMapping.from_variable("tas")
+QM_val = apply_debiaser(QM_debiaser)
+
+
+# ISIMIP (advanced method)
+ISIMIP_debiaser = ISIMIP.from_variable("tas")
+ISIMIP_val = apply_debiaser(ISIMIP_debiaser)
+
+# QuantileDeltaMapping (advanced version of ECDFM, uses a running window)
+QDM_debiaser = QuantileDeltaMapping.from_variable("tas")
+QDM_val = apply_debiaser(QDM_debiaser)
+
 
 # %%
 # Bias evaluation
@@ -79,7 +96,7 @@ def calculate_threshold_exceedances_per_leadtime_month(df, threshold):
     data = np.zeros((6, 12))
     for i, _ in enumerate(threshold_map[:, 0, 0, 0]):
         for j, _ in enumerate(threshold_map[0, :, 0, 0]):
-            data[i, j % 12] = data[i, j % 12] + threshold_map[i, j].sum()
+            data[i, j % 12] = data[i, j % 12] + threshold_map[i, j, 1, 3]
     return data
 
 
@@ -88,11 +105,10 @@ def calculate_threshold_exceedances_per_month(obs_df, threshold):
     # obs_df shape: (time, lat, lon)
     data = np.zeros(12)
     for i in range(obs_df.shape[0]):
-        data[i % 12] += threshold_map[i].sum()
+        data[i % 12] += threshold_map[i, 1, 3]
     return data
 
 
-# Create a DataFrame for the data
 def plot_heatmap(data, title, colorbar_label, decimals=1):
     df = pd.DataFrame(
         data,
@@ -127,7 +143,7 @@ def plot_heatmap(data, title, colorbar_label, decimals=1):
     plt.show()
 
 
-sample_threshold = [293, 308]
+sample_threshold = [294, 313]
 QM_threshold = calculate_threshold_exceedances_per_leadtime_month(
     QM_val, sample_threshold
 )
@@ -149,26 +165,28 @@ plot_heatmap(
 
 
 ## MAE per leadtime per month
-def calculate_MAE_per_leadtime_month(df, obs):
-    AE_map = abs(df - obs)
+def calculate_MAE_per_leadtime_month(df):
+    AE_map = abs(df - reanalysis_validation_np)
     data = np.zeros((6, 12))
     for i, _ in enumerate(AE_map[:, 0, 0, 0]):
         for j, _ in enumerate(AE_map[0, :, 0, 0]):
             data[i, j % 12] = data[i, j % 12] + AE_map[i, j, 1, 3]
     # Since means can be summed over multiple years, divide by number of years in the data
-    data = data / (obs.shape[0] / 12)
+    data = data / (reanalysis_validation_np.shape[0] / 12)
     return data
 
 
-MAE_leadtime_month = calculate_MAE_per_leadtime_month(
-    projections_validation_np, reanalysis_validation_np
-)
+MAE_leadtime_month = calculate_MAE_per_leadtime_month(projections_validation_np)
 plot_heatmap(MAE_leadtime_month, "Raw AE per Leadtime and Month for Qabunah", "AE (K)")
 
-MAE_leadtime_month = calculate_MAE_per_leadtime_month(QM_val, reanalysis_validation_np)
+MAE_leadtime_month = calculate_MAE_per_leadtime_month(QM_val)
 plot_heatmap(MAE_leadtime_month, "QM AE per Leadtime and Month for Qabunah", "AE (K)")
 
+MAE_leadtime_month = calculate_MAE_per_leadtime_month(ISIMIP_val)
+plot_heatmap(MAE_leadtime_month, "ISIMIP AE per Leadtime and Month for Qabunah", "AE (K)")
 
+MAE_leadtime_month = calculate_MAE_per_leadtime_month(QDM_val)
+plot_heatmap(MAE_leadtime_month, "QDM AE per Leadtime and Month for Qabunah", "AE (K)")
 # %%
 # MAE Maps
 ## Spatial MAE for all leadtimes
@@ -200,31 +218,28 @@ def plot_spatial_mae(data, suptitle):
     plt.show()
 
 
-abs_error = abs(QM_val - reanalysis_validation_np)
-abs_error_map = abs_error.mean(axis=(1))
-abs_error_map = xr.DataArray(
-    abs_error_map,
-    dims=("forecastMonth", "latitude", "longitude"),
-    coords={
-        "forecastMonth": projections_validation_ds.forecastMonth,
-        "latitude": projections_validation_ds.latitude,
-        "longitude": projections_validation_ds.longitude,
-    },
-    name="t2m",
-)
+def abs_error_map(debiased_val):
+    abs_error = abs(debiased_val - reanalysis_validation_np)
+    abs_error_map = abs_error.mean(axis=(1))
+    abs_error_map = xr.DataArray(
+        abs_error_map,
+        dims=("forecastMonth", "latitude", "longitude"),
+        coords={
+            "forecastMonth": projections_validation_ds.forecastMonth,
+            "latitude": projections_validation_ds.latitude,
+            "longitude": projections_validation_ds.longitude,
+        },
+        name="t2m",
+    )
+    return abs_error_map
 
-abs_error_raw = abs(projections_validation_np - reanalysis_validation_np)
-abs_error_raw_map = abs_error_raw.mean(axis=(1))
-abs_error_raw_map = xr.DataArray(
-    abs_error_raw_map,
-    dims=("forecastMonth", "latitude", "longitude"),
-    coords={
-        "forecastMonth": projections_validation_ds.forecastMonth,
-        "latitude": projections_validation_ds.latitude,
-        "longitude": projections_validation_ds.longitude,
-    },
-    name="t2m",
-)
 
-plot_spatial_mae(abs_error_raw_map, "Raw MAE")
-plot_spatial_mae(abs_error_map, "Bias corrected MAE")
+raw_abs_error_map = abs_error_map(projections_validation_np)
+QM_abs_error_map = abs_error_map(QM_val)
+ISIMIP_abs_error_map = abs_error_map(ISIMIP_val)
+QDM_abs_error_map = abs_error_map(QDM_val)
+
+plot_spatial_mae(raw_abs_error_map, "Raw MAE")
+plot_spatial_mae(QM_abs_error_map, "QM Bias corrected MAE")
+plot_spatial_mae(ISIMIP_abs_error_map, "ISIMIP Bias corrected MAE")
+plot_spatial_mae(QDM_abs_error_map, "QDM Bias corrected MAE")

@@ -36,7 +36,7 @@ def load_copernicus_data(data_path, st_dim_name="time"):
 #       Copy numlonlat data from (current month - leadtime) in ds and overwrite in copy of ds.
 
 
-def reshape_projections(data, drop):
+def reshape_projections(data):
     """
     # Reshape Dataset for Forecast Alignment
     ### **! Important !** Removes a number of entries from the start of the data equal to the number of leadtimes! \n
@@ -50,13 +50,23 @@ def reshape_projections(data, drop):
     - **xarray.Dataset**:
       The reshaped dataset with adjusted time indices.
     """
+    # ds_reshape = data.copy(deep=True)
+    # fcsize = data.forecastMonth.size
+    #     for i, fcmonth in enumerate(data.forecastMonth):
+    #         for j in range(len(data.time[fcsize:])):
+    #             ds_reshape.t2m[:, i, j + fcsize, :, :] = data.t2m[
+    #                 :, i, j + fcsize - fcmonth, :, :
+    #             ]
+
     ds_reshape = data.copy(deep=True)
     fcsize = data.forecastMonth.size
-    for i, fcmonth in enumerate(data.forecastMonth):
-        for j in range(len(data.time[fcsize:])):
-            ds_reshape.t2m[:, i, j + fcsize, :, :] = data.t2m[
-                :, i, j + fcsize - fcmonth, :, :
-            ]
+    for var in data.data_vars:
+        for i, fcmonth in enumerate(data.forecastMonth):
+            for j in range(len(data.time[fcsize:])):
+                ds_reshape[var][:, i, j + fcsize, :, :] = data[var][
+                    :, i, j + fcsize - fcmonth, :, :
+                ]
+
     ds_reshape = ds_reshape.drop_isel(time=range(0, fcsize))
     return ds_reshape
 

@@ -33,7 +33,11 @@ request = {
     "time": ["00:00"],
     "data_format": "grib",
     "download_format": "unarchived",
-    "variable": ["2m_temperature"],
+    "variable": [
+        "2m_temperature",
+        "minimum_2m_temperature_in_the_last_24_hours",
+        "maximum_2m_temperature_in_the_last_24_hours",
+    ],
     "area": [31.8, 28.4, 28, 31.4],
 }
 target = "GRIB_data/reanalysis_hindcast_copernicus.grib"

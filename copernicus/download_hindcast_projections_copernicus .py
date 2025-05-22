@@ -24,9 +24,13 @@ import cdsapi
 
 dataset = "seasonal-monthly-single-levels"
 request = {
-    "originating_centre": "eccc",
+    "originating_centre": "ecmwf",
     "system": "5",
-    "variable": ["2m_temperature"],
+    "variable": [
+        "2m_temperature",
+        "minimum_2m_temperature_in_the_last_24_hours",
+        "maximum_2m_temperature_in_the_last_24_hours",
+    ],
     "year": [
         "1993",
         "1994",
@@ -59,7 +63,7 @@ request = {
     "product_type": ["monthly_mean"],
     "area": [31.8, 28.4, 28, 31.4],
 }
-target = "GRIB_data/ECCC_hindcast_projections.grib"
+target = "GRIB_data/ECMWF_hindcast_projections.grib"
 
 client = cdsapi.Client()
 client.retrieve(dataset, request, target)
