@@ -12,45 +12,36 @@ import matplotlib.pyplot as plt
 ##############################################################################################
 ################################### START OF DATA INPUT ######################################
 ##############################################################################################
-# Define directories and file paths
+# Define current and parent working directories
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
+base_wd = os.path.dirname(os.path.dirname(parent_wd))
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Kafr_El-Shikh"                         # dummy variable for testing.
 
-# Set directories
-DATA_DIR = os.path.join(angola_wd, "01_Data")
-GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+# Define other folders
+DATA_DIR = os.path.join(parent_wd, "01_Data")
+GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+os.makedirs(RESULTS_DIR, exist_ok=True)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
-PARAMETERS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
-DEM_DATA_DIR = os.path.join(RESULTS_DIR, "DEM")
-INDIR_ELEV = os.path.join(RESULTS_DIR, "_LS_Results", "Elevation")
-DEM_PATH = os.path.join(DATA_DIR, "Elevation",
-                        "SRTM_30M_Angola_mask.tif")
-
-# Set resolution and projection
-RES = 250                                       # Set resolution in meters
-LOCAL_PROJ = "EPSG:32733"
-NO_DATA_VALUE = -9999.0
 
 # Create output directory for DEM
+DEM_PATH = os.path.join(DATA_DIR, "DEM", "DEM_NileDelta_250m.tif")
+NEW_DEM_DIR = os.path.join(RESULTS_DIR, "DEM")
+SLOPE_DIR = os.path.join(RESULTS_DIR, "_LS_RESULTS", "Slope")
+os.makedirs(SLOPE_DIR, exist_ok=True)
+os.makedirs(NEW_DEM_DIR, exist_ok=True)
 
-
-def ensure_dir(directory):  # Function to ensure directory exists
-    os.makedirs(directory, exist_ok=True)
-
-
-ensure_dir(DEM_DATA_DIR)
-ensure_dir(INDIR_ELEV)
-
-# Load province shapefile
-PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
-provinces_shp = gpd.read_file(PROVINCES_FILEPATH)
-PROVINCE_SHP_SEL = provinces_shp[provinces_shp["NAME_1"] == PROVINCE_NAME]
+# Temperature variables and parameters
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
+LOCAL_PROJ = "EPSG:32636"  # Local projection
+SRC_CRS = "EPSG:4326"  # Projection from NetCDF files: WGS84 projection
+PARAMETERS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 ##############################################################################################
 ######################################### Mask DEM ###########################################
@@ -62,13 +53,17 @@ with rasterio.open(DEM_PATH) as src:
     src_nodata = src.nodata
     profile = src.profile.copy()
     data = src.read(1)
+    dem_crs = src.crs
 
-    # Project shapefile to match DEM CRS if needed
-    if PROVINCE_SHP_SEL.crs != src.crs:
-        PROVINCE_SHP_SEL = PROVINCE_SHP_SEL.to_crs(src.crs)
+    # Load province shapefile and set to crs of DEM
+    provinces_filepath = os.path.join(GIS_DIR, "Nile_delta_bnd_adm1.shp")
+    provinces_shp = gpd.read_file(provinces_filepath)
+    province_shp_sel = provinces_shp[provinces_shp["ADM1_EN"] == PROVINCE_NAME]
+    province_shp_reproj = province_shp_sel.to_crs(LOCAL_PROJ)
 
     # Crop DEM to shapefile extent.
-    out_image, out_transform = mask(src, PROVINCE_SHP_SEL.geometry, crop=True)
+    out_image, out_transform = mask(
+        src, province_shp_reproj.geometry, crop=True)
 
     # Copy metadata. Transform matrix is taken from DEM.
     out_profile = profile.copy()
@@ -94,9 +89,8 @@ with rasterio.open(cropped_dem_path, "w", **out_profile) as dest:
 ##############################################################################################
 # Step 2: Prepare target raster with desired resolution and projection for resampling.
 print(f"Setting up target raster grid: {PROVINCE_NAME}")
-# Project province shapefile to local projection for determining bounds
-PROVINCE_SHP_NEWPROJ = PROVINCE_SHP_SEL.to_crs(LOCAL_PROJ)
-bounds = PROVINCE_SHP_NEWPROJ.total_bounds  # [xmin, ymin, xmax, ymax]
+# Determining bounds
+bounds = province_shp_reproj.total_bounds  # [xmin, ymin, xmax, ymax]
 
 # Calculate dimensions of target raster
 width = int((bounds[2] - bounds[0]) / RES)
@@ -125,27 +119,6 @@ with rasterio.open(cropped_dem_path) as src:
         resampling=Resampling.bilinear
     )
 
-# # Step 4: Reproject using nearest neighbor method
-# print(f"Nearest Neighbor projectRaster DEM: {PROVINCE_NAME}")
-# ngb_dem = np.zeros((height, width), dtype=np.float32)
-
-# with rasterio.open(DEM_PATH) as src:
-#     reproject(
-#         source=src.read(1),
-#         destination=ngb_dem,
-#         src_transform=src.transform,
-#         src_crs=src.crs,
-#         dst_transform=target_transform,
-#         dst_crs=LOCAL_PROJ,
-#         resampling=Resampling.nearest
-#     )
-
-# Step 5: Calculate difference between bilinear and nearest neighbor
-# Unclear why we need this for now.
-# diffd_dem = bilinear_dem - ngb_dem
-
-# # Step 6: Write results to files
-print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
 # Metadata for output files
 out_profile = {
     "driver": "GTiff",
@@ -158,10 +131,34 @@ out_profile = {
     "nodata": NO_DATA_VALUE
 }
 
+# Create a memory file with the reprojected data for masking
+with rasterio.MemoryFile() as memfile:
+    with memfile.open(**out_profile) as temp_dst:
+        temp_dst.write(bilinear_dem, 1)
+
+        # Perform the masking operation
+        masked_data, masked_transform = mask(
+            temp_dst,
+            province_shp_reproj.geometry,
+            crop=True,
+            nodata=NO_DATA_VALUE
+        )
+
+        # Update profile for the masked result
+        masked_profile = temp_dst.profile.copy()
+        masked_profile.update({
+            'height': masked_data.shape[1],
+            'width': masked_data.shape[2],
+            'transform': masked_transform,
+        })
+
+# # Step 6: Write results to files
+print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
+
 # Write bilinear resampled DEM
-bilinear_path = os.path.join(DEM_DATA_DIR, f"DEM_{PROVINCE_NAME}_{RES}m.tif")
-with rasterio.open(bilinear_path, "w", **out_profile) as dst:
-    dst.write(bilinear_dem, 1)
+bilinear_path = os.path.join(NEW_DEM_DIR, f"DEM_{PROVINCE_NAME}_{RES}m.tif")
+with rasterio.open(bilinear_path, "w", **masked_profile) as dst:
+    dst.write(masked_data)
 
 # # Write difference raster
 # diff_path = os.path.join(DEM_DATA_DIR, f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
@@ -186,10 +183,10 @@ def calculate_slope(dem, cell_size=RES):
 
 
 # Calculate slope
-slope = calculate_slope(bilinear_dem)
+slope = calculate_slope(masked_data[0])
 
 # Save slope raster
-slope_path = os.path.join(INDIR_ELEV, f"Slope_{PROVINCE_NAME}.tif")
+slope_path = os.path.join(SLOPE_DIR, f"Slope_{PROVINCE_NAME}.tif")
 with rasterio.open(slope_path, "w", **out_profile) as dst:
     dst.write(slope.astype(rasterio.float32), 1)
 
@@ -197,13 +194,17 @@ with rasterio.open(slope_path, "w", **out_profile) as dst:
 # Get slope threshold from params (you'll need to define this)
 slope_threshold = float(
     PARAMETERS.loc[PARAMETERS['Parameter'] == 'Slope', 'Limit'].values[0])
-slope_lower_limit = (slope < slope_threshold) & (bilinear_dem != NO_DATA_VALUE)
+slope_lower_limit = (slope < slope_threshold) & (masked_data[0] != NO_DATA_VALUE)
 slope_lower_limit = slope_lower_limit.astype(np.uint8)  # Convert to uint8
+
 
 # Save threshold raster
 print(f"Write rasters slope and slope limit: {PROVINCE_NAME}")
 lower_slope_path = os.path.join(
-    INDIR_ELEV, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
+    SLOPE_DIR, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
+out_profile.update({
+    'dtype': 'uint8',
+    'nodata': 0,})
 
 with rasterio.open(lower_slope_path, "w", **out_profile) as dst:
     dst.write(slope_lower_limit, 1)

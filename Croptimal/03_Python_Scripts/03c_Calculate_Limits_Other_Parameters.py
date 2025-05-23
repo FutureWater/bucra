@@ -20,28 +20,30 @@ This script calculates suitability limits for various parameters:
 # Define current and parent working directories
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
+base_wd = os.path.dirname(os.path.dirname(parent_wd))
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Alexandria"                         # dummy variable for testing.
 
 # Define other folders
-DATA_DIR = os.path.join(angola_wd, "01_Data")
-GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+DATA_DIR = os.path.join(parent_wd, "01_Data")
+GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+os.makedirs(RESULTS_DIR, exist_ok=True)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
-HHS_DATA_DIR = os.path.join(DATA_DIR, "Soil_Hydraulic_Properties")
+HHS_DATA_DIR = os.path.join(RESULTS_DIR, "Soil_Hydraulic_Properties")
 LS_RESULTS = os.path.join(RESULTS_DIR, '_LS_Results')
 
 # Define constants
 RES = 250  # Resolution in meters
 NO_DATA_VALUE = -9999.0  # No data value
-LOCAL_PROJECTION = "EPSG:32733"
+LOCAL_PROJECTION = "EPSG:32636"
 
 
 # Load cropping calendar and parameters
-CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ';')
 PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 
@@ -49,8 +51,8 @@ PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 ###################### Process parameters and create limit maps ####################################
 ####################################################################################################
 ############## Process each parameter folder ##############
+print("Processing remaining suitability parameters...")
 for folder in PARAMS['LS_Results_Folder'].unique():
-    print("Processing other suitability parameters...")
     # Get parameters for this folder
     folder_mask = PARAMS['LS_Results_Folder'] == folder
     parameters = PARAMS.loc[folder_mask, 'Parameter'].tolist()
@@ -63,8 +65,7 @@ for folder in PARAMS['LS_Results_Folder'].unique():
     os.makedirs(new_results_subdir, exist_ok=True)
 
     # Skip folders handled in other scripts
-    if folder in ["Elevation", "Water"]:
-        print(f"    Skipping {folder} - calculated in other scripts")
+    if folder in ["Elevation", "Water", "Temperature"]:
         continue
 
     ############## Process NDVI ##############
@@ -135,11 +136,11 @@ for folder in PARAMS['LS_Results_Folder'].unique():
                 f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}.tif"
             )
 
-            out_meta = ndvi_meta.copy()
-            out_meta.update({'dtype': 'uint8',
+            out_profile = ndvi_meta.copy()
+            out_profile.update({'dtype': 'uint8',
                              'nodata': 0})
 
-            with rasterio.open(output_path, 'w', **out_meta) as dst:
+            with rasterio.open(output_path, 'w', **out_profile) as dst:
                 dst.write(ndvi_limit, 1)
 
     ############## Process soil nutrient content ##############
@@ -155,10 +156,11 @@ for folder in PARAMS['LS_Results_Folder'].unique():
             abrev = abrevs[i]
             limit = limits[i]
             unit = units[i]
+            parameter = parameters[i]
 
             # Find matching file
             matching_files = [
-                f for f in snc_files if f"_{abrev}_" in os.path.basename(f).lower()]
+                f for f in snc_files if parameter.lower() in os.path.basename(f).lower()]
             if not matching_files:
                 print(f"  No data found for {param}")
                 continue
@@ -178,125 +180,74 @@ for folder in PARAMS['LS_Results_Folder'].unique():
                     f"Extractable_{abrev.upper()}_Soil_higher_than_{limit}{unit}_{PROVINCE_NAME}.tif"
                 )
 
-                out_meta = snc_meta.copy()
-                out_meta.update({'dtype': 'uint8',
+                out_profile = snc_meta.copy()
+                out_profile.update({'dtype': 'uint8',
                                 'nodata': 0})
 
-                with rasterio.open(output_path, 'w', **out_meta) as dst:
+                with rasterio.open(output_path, 'w', **out_profile) as dst:
                     dst.write(limit_raster, 1)
 
     # ############## Process soil hydraulic properties ##############
-    # if folder == "Soil_Hydraulic_Properties":
-    #   print(f"Processing {folder}...")
-    #     # Load reference DEM
-    #     dem_path = os.path.join(
-    #         RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
-    #     with rasterio.open(dem_path) as dem_src:
-    #         dem_profile = dem_src.profile.copy()
-    #         dem_crs = dem_src.crs
-    #         dem_transform = dem_src.transform
-    #         dem_shape = dem_src.shape
+    if folder == "Soil_Hydraulic_Properties":
+        print(f"Processing {folder}...")
+        # Load HHS data files that match parameters
+        hhs_files = []
+        for param in parameters:
+            hhs_files.extend(glob.glob(os.path.join(
+                HHS_DATA_DIR, "*.tif")))
 
-    #     # Create boundary in WGS84 for cropping
-    #     boundary_crs = 'EPSG:4326'
-    #     boundary_transform, boundary_width, boundary_height = calculate_default_transform(
-    #         dem_crs, boundary_crs, dem_shape[1], dem_shape[0],
-    #         left = dem_src.bounds.left, bottom = dem_src.bounds.bottom,
-    #         right = dem_src.bounds.right, top = dem_src.bounds.top,
-    #         resolution=RES
-    #     )
+        # Load and process each HHS parameter
+        for param in parameters:
+            print(f"  Processing {param}...")
 
-    #     # Load HHS data files that match parameters
-    #     hhs_files = []
-    #     for param in parameters:
-    #         hhs_files.extend(glob.glob(os.path.join(
-    #             HHS_DATA_DIR, "*.tif")))
+            # Set multiplier based on parameter
+            MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
 
-    #     # Load and process each HHS parameter
-    #     for param in parameters:
-    #         print(f"  Processing {param}...")
+            # Get limit and unit for this parameter
+            idx = parameters.index(param)
+            limit = limits[idx]
+            unit = units[idx]
 
-    #         # Set multiplier based on parameter
-    #         MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
+            # Find topsoil and subsoil files and read data
+            topsoil_file = None
+            subsoil_file = None
+            for file in hhs_files:
+                if param in file:
+                    # Open topsoil and subsoil files
+                    if "TOPSOIL" in file:
+                        topsoil_file = file
+                        with rasterio.open(topsoil_file) as src:
+                            topsoil_data = src.read(1)
+                            topsoil_profile = src.profile.copy()
+                    elif "SUBSOIL" in file:
+                        subsoil_file = file
+                        with rasterio.open(subsoil_file) as src:
+                            subsoil_data = src.read(1)
 
-    #         # Get limit and unit for this parameter
-    #         idx = parameters.index(param)
-    #         limit = limits[idx]
-    #         unit = units[idx]
+            if not topsoil_file or not subsoil_file:
+                print(f"  Missing soil data for {param}")
+                continue
 
-    #         # Find topsoil and subsoil files
-    #         topsoil_file = None
-    #         subsoil_file = None
-    #         for file in hhs_files:
-    #             if param in file.lower():
-    #                 if "topsoil" in file.lower():
-    #                     topsoil_file = file
-    #                 elif "subsoil" in file.lower():
-    #                     subsoil_file = file
+            # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
+            weighted_topsoil = topsoil_data * 0.3
+            weighted_subsoil = subsoil_data * 1.7
+            weighted_avg = (weighted_topsoil +
+                            weighted_subsoil) / 2 * MULTIPLIER
 
-    #         if not topsoil_file or not subsoil_file:
-    #             print(f"  Missing soil data for {param}")
-    #             continue
+            # Apply limit
+            limit_value = float(limit)
+            limit_raster = (weighted_avg > limit_value).astype(np.uint8)
 
-    #         # Process topsoil
-    #         with rasterio.open(topsoil_file) as src:
-    #             # Division by 10000 as in R script
-    #             topsoil_data = src.read(1) / 10000
-    #             topsoil_meta = src.meta.copy()
+            # Save output
+            output_path = os.path.join(
+                new_results_subdir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
+            out_profile = topsoil_profile.copy()
+            out_profile.update({
+                'dtype': 'uint8',
+                'count': 1
+            })
 
-    #             # Reproject to match DEM
-    #             topsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
-    #             reproject(
-    #                 source=rasterio.band(src, 1),
-    #                 destination=topsoil_reproj,
-    #                 src_transform=src.transform,
-    #                 src_crs=src.crs,
-    #                 dst_transform=dem_transform,
-    #                 dst_crs=dem_crs,
-    #                 resampling=Resampling.bilinear,
-    #                 src_nodata=NO_DATA_VALUE,
-    #                 dst_nodata=NO_DATA_VALUE
-    #             )
-
-    #         # Process subsoil
-    #         with rasterio.open(subsoil_file) as src:
-    #             # Division by 10000 as in R script
-    #             subsoil_data = src.read(1) / 10000
-
-    #             # Reproject to match DEM
-    #             subsoil_reproj = np.zeros(dem_shape, dtype=np.float32)
-    #             reproject(
-    #                 source=rasterio.band(src, 1),
-    #                 destination=subsoil_reproj,
-    #                 src_transform=src.transform,
-    #                 src_crs=src.crs,
-    #                 dst_transform=dem_transform,
-    #                 dst_crs=dem_crs,
-    #                 resampling=Resampling.bilinear,
-    #                 src_nodata=NO_DATA_VALUE,
-    #                 dst_nodata=NO_DATA_VALUE
-    #             )
-
-    #         # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
-    #         weighted_topsoil = topsoil_reproj * 0.3
-    #         weighted_subsoil = subsoil_reproj * 1.7
-    #         weighted_avg = (weighted_topsoil +
-    #                         weighted_subsoil) / 2 * MULTIPLIER
-
-    #         # Apply limit
-    #         limit_value = float(limit)
-    #         limit_raster = (weighted_avg > limit_value).astype(np.uint8)
-
-    #         # Save output
-    #         output_path = os.path.join(
-    #             new_dir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
-    #         out_meta = dem_profile.copy()
-    #         out_meta.update({
-    #             'dtype': 'uint8',
-    #             'count': 1
-    #         })
-
-    #         with rasterio.open(output_path, 'w', **out_meta) as dst:
-    #             dst.write(limit_raster, 1)
+            with rasterio.open(output_path, 'w', **out_profile) as dst:
+                dst.write(limit_raster, 1)
 
 print("Parameter limits calculation complete!")

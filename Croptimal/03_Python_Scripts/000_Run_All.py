@@ -2,6 +2,7 @@
 import os
 import glob
 import datetime
+import sys
 import calendar
 import subprocess
 from pathlib import Path
@@ -17,32 +18,35 @@ import matplotlib.pyplot as plt
 ##############################################################################################
 ################################### START OF DATA INPUT ######################################
 ##############################################################################################
-# Get current working directory.
-current_wd = os.getcwd()
-parent_wd = os.path.dirname(current_wd)
+# Define current and parent working directories
+CURRENT_WD = os.getcwd()
+PARENT_WD = os.path.dirname(CURRENT_WD)
+BASE_WD = os.path.dirname(os.path.dirname(PARENT_WD))
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
-# General Folder directories
-DATA_DIR = os.path.join(angola_wd, "01_Data")
-GIS_DIR = os.path.join(angola_wd, "02_GIS")
-SCRIPTS_DIR = os.path.join(parent_wd, "03_Python_Scripts")
-RESULTS_DIR = os.path.join(parent_wd, "04_Results")
-TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+# Define main folders
+DATA_DIR = os.path.join(PARENT_WD, "01_Data")
+GIS_DIR = os.path.join(BASE_WD, "GIS")     # Directory with shapefiles
+RESULTS_DIR = os.path.join(PARENT_WD, "04_Results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+TEMP_DIR = os.path.join(PARENT_WD, "05_Temp")
+SCRIPTS_DIR = os.path.join(PARENT_WD, "03_Python_Scripts")
 
-# Input data directories
-PROVINCES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
-COMMUNES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
-DEM = os.path.join(DATA_DIR, "Elevation", "SRTM_30m_Angola_mask.tif")
+
+# Input data paths
+PROVINCES = os.path.join(GIS_DIR, "Nile_delta_bnd_adm1.shp")
+# COMMUNES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
+DEM = os.path.join(DATA_DIR, "DEM\DEM_NileDelta_250m.tif")
 HHS_DATA_DIR = os.path.join(DATA_DIR, "__TO_DROPBOX__", "Top_Subsoil")
 CROPPING_CALENDER = os.path.join(SCRIPTS_DIR, "Cropping_calendar.csv")
 CC_A = os.path.join(SCRIPTS_DIR, "Cropping_calendar_A.csv")
 CC_B = os.path.join(SCRIPTS_DIR, "Cropping_calendar_B.csv")
 PARAMETERS = os.path.join(SCRIPTS_DIR, "Parameters.csv")
-SEASONAL_FORECAST_DIR = os.path.join(parent_wd, "Seasonalforecast")
+SEASONAL_FORECAST_DIR = os.path.join(PARENT_WD, "Seasonalforecast")
 
 # Output directories
-NEW_DIR = os.path.join(parent_wd, "04_Results", "_LS_Results", "_Communes")
-NEW_DROP = os.path.join(parent_wd, "Dropbox (FutureWater)",
+NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR, "_LS_Results", "_Communes")
+NEW_DROP = os.path.join(PARENT_WD, "Dropbox (FutureWater)",
                         "FW_VH_RK", "04_Results", "_LS_Results", "_Communes")
 
 ##############################################################################################
@@ -54,112 +58,22 @@ SWITCH = 2  # 0: all, 1: new crops only, 2: seasonal forecast only
 
 # Resolution and projection of final rasters
 RES = 250  # meter
-LOCAL_PRO = "EPSG:32733"
+LOCAL_PROJ = "EPSG:32636"
 
 # Temperature input
 T_LAPSE_RATE = -0.0065
 T_PERC = [0.75, 0.95]
-T_vars = ["tavg", "tmin", "tmax"]
+T_vars = ["Tmean", "Tmin", "Tmax"]
 T_perc_names = ["Warmer", "Much_Warmer"]
 
 # Rainfall input
 P_perc = [0.25, 0.05]
 P_perc_names = ["Drier", "Much_Drier"]
 
-##############################################################################################
-#################### CREATE SCENARIOS AND CROPPING CALENDARS FOR EACH SCENARIO ###############
-##############################################################################################
-# Load DEM raster
-# with rasterio.open(DEM) as src:
-#     DEM_r = src.read(1)
-#     dem_profile = src.profile
-
 # Read provinces shapefile
-provinces_shp = gpd.read_file(PROVINCES)
-provinces_names = provinces_shp['NAME_1'].tolist()
+province_shp = gpd.read_file(PROVINCES)
+province_names = province_shp["ADM1_EN"].tolist()
 
-# Read cropping calendars
-# cropping_cal = pd.read_csv(CROPPING_CALENDER, sep=",")
-# cropping_cal_a = pd.read_csv(CC_A, sep=",")
-# cropping_cal_b = pd.read_csv(CC_B, sep=",")
-
-# # Read parameters
-# params = pd.read_csv(PARAMETERS)
-
-# Generate unique combinations of climate scenarios
-# unique_combis = []
-# for t_name in T_perc_names:
-#     unique_combis.append(f"Average_{t_name}")
-# for p_name in P_perc_names:
-#     unique_combis.append(f"{p_name}_Average")
-# for p_name in P_perc_names:
-#     for t_name in T_perc_names:
-#         unique_combis.append(f"{p_name}_{t_name}")
-# unique_combis.append("Average_Average")
-
-# # Add prefix to all combinations
-# unique_combis = [f"Land_Suitability_{combo}" for combo in unique_combis]
-
-##############################################################################################
-##### CREATE DATAFRAME FOR FINAL FORECAST WITH CROP SUITABILITY COLUMNS FOR EACH COMMUNE #####
-##############################################################################################
-# # Create a dataframe for communes
-# communes_shp = gpd.read_file(COMMUNES)
-# communes_shp_proj = communes_shp.to_crs(LOCAL_PRO)
-# communes_df = pd.DataFrame({
-#     "Province": communes_shp_proj['NAME_1'].str.replace(" ", "_"),
-#     "Municipality": communes_shp_proj['NAME_2'],
-#     "Commune": communes_shp_proj['NAME_3']
-#     # "Zone": communes_shp['Zone']  # Uncomment if Zone is in the shapefile
-# })
-
-# # Create month columns and prepare crop names
-# month_abbr = [calendar.month_abbr[i] for i in range(1, 13)]
-
-# # Create final forecast dataframe, with columns for province, commune and crop (including crop season in crop name)
-# final_forecast_df = pd.DataFrame({
-#     "Province": [None] * (len(communes_df) * len(cropping_cal)),
-#     "Commune": np.repeat(communes_df['Commune'].values, len(cropping_cal)),
-#     "Crop": [f"{crop}_{month_abbr[start-1]}_{month_abbr[end-1]}"
-#              for crop, start, end in zip(
-#                  cropping_cal['Crop'],
-#                  cropping_cal['Start_growing_season'],
-#                  cropping_cal['End_growing_season'])
-#              for _ in range(len(communes_df))]
-# })
-
-# # Add month columns
-# for month in month_abbr:
-#     final_forecast_df[month] = np.nan
-
-# # Add additional columns
-# additional_columns = [
-#     "Planting_Suitability_M1", "Planting_Suitability_M2", "Planting_Suitability_M3",
-#     "Crop_Start_Month", "Average_Average", "Threshold"
-# ]
-# for col in additional_columns:
-#     final_forecast_df[col] = np.nan
-
-# # Fill Province column based on Commune
-# for i in range(len(final_forecast_df)):
-#     commune = final_forecast_df.loc[i, 'Commune']
-#     matching_province = communes_df.loc[communes_df['Commune']
-#                                         == commune, 'Province'].values
-#     if len(matching_province) > 0:
-#         final_forecast_df.loc[i, 'Province'] = matching_province[0]
-
-
-# # Add crop specific columns to communes_df
-# for _, row in cropping_cal.iterrows():
-#     crop = row['Crop']
-#     start_month = row['Start_growing_season']
-#     end_month = row['End_growing_season']
-#     name_col = f"{crop}_{month_abbr[start_month-1]}_{month_abbr[end_month-1]}"
-#     communes_df[name_col] = np.nan
-
-# # Create CSV files for each climate scenario
-# for comb in unique_combis:
-#     communes_df.to_csv(f"{comb}_Communes.csv")
 
 
 ##############################################################################################
@@ -195,21 +109,21 @@ def main():
         ##############################################################################################
         # Create list of all scripts with relative file paths
         list_scripts = [script for script in glob.glob(os.path.join(
-            SCRIPTS_DIR, "*.py")) if "000_Run_All.py" not in script]
+            SCRIPTS_DIR, "*.py")) if not ("000_Run_All.py" or '05_Seasonal')in script]
         # Sort the list of scripts from in correct order
         list_scripts.sort()
+        # print(list_scripts)
 
         # Process all scripts
-        list_scripts = list_scripts[:3]
         for script in list_scripts:
             script_name = os.path.basename(script)[:-3]
 
             # Run the script for each province.
             # When running only one province
-            province_name = provinces_names[:1]
-            for name in province_name:
+            for name in province_names[-1:]:
                 # Clean temporary files to have a clean folder to work with.
                 temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
+
                 for f in temp_files:
                     try:
                         os.remove(f)
@@ -217,28 +131,46 @@ def main():
                         pass
 
                 # Get province name as string
-                province_shp = provinces_shp[provinces_shp['NAME_1'] == name]
-                name = name.replace(" ", "_")
+                #name = name.replace(" ", "_")
 
-                # Run the script with subprocess
+                # Run the script with subprocess. Give all constants as environment variables.
                 print(
                     f"Run {script_name} for {name}.")
                 myenv = os.environ.copy()
                 myenv["PROVINCE"] = name
+                #myenv["RESOLUTION"] = RES
+                myenv["CWD"] = CURRENT_WD
+                myenv["LOCAL_PROJ"] = LOCAL_PROJ
+
                 # Try to run code with subprocess. When script fails, print error message.
                 try:
-                    result = subprocess.run(["python", script],
-                                            env=myenv,
-                                            check=True,
-                                            # capture_output=True,
-                                            text=True)
+                    # result = subprocess.run(["python", script],
+                    #                         env=myenv,
+                    #                         check=True,
+                    #                         text=True)
+                    
+                    process = subprocess.Popen(["python", script],
+                             env=myenv,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE,
+                             universal_newlines=True)
+    
+                    # Print output in real-time
+                    for stdout_line in iter(process.stdout.readline, ""):
+                        print(stdout_line, end="")
+                        sys.stdout.flush()
+                    
+                    process.stdout.close()
+                    return_code = process.wait()
+                    if return_code:
+                        raise subprocess.CalledProcessError(return_code, process.args)
+                    
                 except subprocess.CalledProcessError as e:
                     print(
                         f"Error running script {script} for province {name}")
                     print(e.stdout)
                     print(e.stderr)
 
-                print("\n")
                 # Clean temporary files
                 temp_files = glob.glob(os.path.join(TEMP_DIR, "*.tif"))
                 for f in temp_files:

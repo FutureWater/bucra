@@ -3,25 +3,26 @@ import glob
 import calendar
 import rasterio
 import numpy as np
-from rasterio.warp import reproject, Resampling
-from rasterio.windows import from_bounds
+from rasterio.warp import reproject, Resampling, calculate_default_transform
 from rasterio.mask import mask
-import geopandas as gpd
-import matplotlib.pyplot as plt
+from rasterio.transform import from_origin
 from rasterio.plot import show
-
+# import rioxarray
+import geopandas as gpd
+import xarray as xr
+import pandas as pd
+import matplotlib.pyplot as plt
 
 """
-This script processes NDVI files by:
-1. Defining directories and file paths
-2. Creating output directories
-3. Loading input NDVI files
-4. Importing DEM for reference extent and resolution
-5. Processing each NDVI file individually to avoid memory issues:
-   a. Reprojecting/resampling data to match DEM
-   b. Cropping raster to extent of the DEM
-   c. Saving the resampled and cropped raster
+This script processes reference evapotranspiration (ET) data by:
+1. Reading monthly ET data from NetCDF files
+2. Calculating monthly means
+3. Cropping to a province boundary
+4. Resampling to match a reference DEM
+5. Applying monthly day multipliers
+6. Saving the processed data
 """
+
 ####################################################################################################
 ########################## Define directories and file paths #######################################
 ####################################################################################################
@@ -40,14 +41,18 @@ DATA_DIR = os.path.join(parent_wd, "01_Data")
 GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
-NDVI_MM_DIR = os.path.join(RESULTS_DIR, "NDVI", "Mean_Monthly")
-os.makedirs(NDVI_MM_DIR, exist_ok=True)
-
-# Set constants
+# Define constants
+RES = 250  # Set resolution in meters
 NO_DATA_VALUE = -9999.0
-RES = 250  # Set resolution
-LOCAL_PROJ = "EPSG:32636"  # Local projection
+DEM_PATH = os.path.join(
+    RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")  # Path to DEM file
+
+# Define input and output paths
+INPUT_FILE = glob.glob(os.path.join(DATA_DIR, "RET", "*.tif"))
+REF_ET_RESULTS_DIR = os.path.join(RESULTS_DIR, "Ref_ET")
+os.makedirs(REF_ET_RESULTS_DIR, exist_ok=True)
 
 ####################################################################################################
 ####################### Loading DEM and province shapefile #########################################
@@ -69,41 +74,43 @@ provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["ADM1_EN"] == PROVINCE_NAME]
 province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
-
 ####################################################################################################
-################################# Resample NDVI files ##############################################
+################################# Resample ET raster to match DEM ##################################
 ####################################################################################################
-# Get input files
-INPUT_FILE = os.path.join(DATA_DIR, "NDVI", "NDVI_mean_monthly_stack.tif")
+# Multiplier for days in each month
+MULTIPLIER = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
 
-# Process each NDVI file individually to avoid memory issues
-month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
+MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
 
-# Iterate over al the months (bands in the NDVI geotiff)
-print("Resampling NDVI files...")
-with rasterio.open(INPUT_FILE) as src:
+# Process each month (band) in the rainfall geotiff
+with rasterio.open(INPUT_FILE[0]) as src:
+    print("Opening RET files and calculating monthly mean RET")
+
     num_bands = src.count
-    for i in range(1, num_bands + 1):
-        temp_data = src.read(i)
-        temp_profile = src.profile
 
-        month = month_abbrs[i-1]
-        print(f"  Processing NDVI for {month}...")
+    for i in range(1, num_bands + 1):
+        # Read the data and profile
+        RET_data = src.read(i)
+        RET_profile = src.profile
+
+        # Get the month abbreviation
+        month = MONTH_ABBRS[i-1]
+        print(f"  Processing RET for {month}...")
 
         # Create empty destination array
         destination_array = np.full(
-            (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=temp_data.dtype)
+            (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=RET_data.dtype)
 
-        # Reproject and write resampled raster
+        # Reproject and write
         reproject(
-            source=temp_data,
+            source=RET_data,
             destination=destination_array,
             src_transform=src.transform,
             src_crs=src.crs,
             dst_transform=DEM_TRANSFORM,
             dst_crs=DEM_CRS,
             resampling=Resampling.bilinear,
-            src_nodata=src.nodata,
+            src_nodata=NO_DATA_VALUE,
             dst_nodata=NO_DATA_VALUE
         )
 
@@ -128,9 +135,14 @@ with rasterio.open(INPUT_FILE) as src:
                     'transform': masked_transform,
                 })
 
-        output_path = os.path.join(
-            NDVI_MM_DIR, f"NDVI_{month}.tif")
-        with rasterio.open(output_path, 'w', **masked_profile) as dst:
-            dst.write(masked_data.astype(rasterio.float32))
+        # Write the final masked result to file
+        OUTPUT_PATH = os.path.join(REF_ET_RESULTS_DIR, f"RET_{month}.tif")
+        with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
+            dst.write(masked_data)
 
-print("NDVI resampling complete!")
+
+# Show final ET raster
+# with rasterio.open(output_path) as src:
+#     show(src, title="Final ET raster with rasterio")
+
+print(f"Processing complete for {PROVINCE_NAME}")

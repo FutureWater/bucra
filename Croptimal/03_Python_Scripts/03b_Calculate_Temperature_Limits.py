@@ -21,34 +21,41 @@ This script calculates temperature limits for different crops by:
 # Define current and parent working directories
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
+base_wd = os.path.dirname(os.path.dirname(parent_wd))
 angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-PROVINCE_NAME = "Zaire"                         # dummy variable for testing.
+# PROVINCE_NAME = "Sharkia"                         # dummy variable for testing.
 
 # Define other folders
-DATA_DIR = os.path.join(angola_wd, "01_Data")
-GIS_DIR = os.path.join(angola_wd, "02_GIS")     # Directory with shapefiles
+DATA_DIR = os.path.join(parent_wd, "01_Data")
+GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
+os.makedirs(RESULTS_DIR, exist_ok=True)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
-LOCAL_PROJECTION = "EPSG:32733"
 
 # Define constants
 RES = 250  # Resolution in meters
 NO_DATA_VALUE = -9999.0  # No data value
-T_PERC = [0.75, 0.95]  # Percentiles to process
+LOCAL_PROJ = "EPSG:32636"  # Local projection
+
+# Define constants
+RES = 250  # Resolution in meters
+NO_DATA_VALUE = -9999.0  # No data value
+VARIABLES = ['P75', 'P95', 'Mean']  # Percentiles to process
 
 # Load cropping calendar and parameters
-CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_A.csv"))
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ";")
+CROPPING_CAL_ANG = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_angola.csv"))
 PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 
 # Get input temperature files
 input_files_tmin = glob.glob(os.path.join(
-    RESULTS_DIR, "Temperature", "tmin", "**", "*.tif"), recursive=True)
+    RESULTS_DIR, "Temperature", "Tmin*", "**", "*.tif"), recursive=True)
 input_files_tmax = glob.glob(os.path.join(
-    RESULTS_DIR, "Temperature", "tmax", "**", "*.tif"), recursive=True)
+    RESULTS_DIR, "Temperature", "Tmax*", "**", "*.tif"), recursive=True)
 
 # Create output directory
 NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR,
@@ -58,20 +65,8 @@ NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR,
 ###################### Process parameters and create limit maps ####################################
 ####################################################################################################
 # Process each percentile (and Monthly_Mean)
-for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
-    print(f"Processing temperature limits for {p_val}...")
-    # Handle percentile naming and folder setup
-    if p_val == "Monthly_Mean":
-        per = "Monthly_Mean"
-        folder_name = "Tmax_Monthly_Mean"
-        start_name = "Tmax_MM_between"
-    else:
-        per = f"{str(p_val).replace('.', '')}perc"
-        folder_name = f"Tmax_{per}"
-        start_name = f"Tmax_{per}_between"
-
-    # Create output directory
-    os.makedirs(os.path.join(NEW_RESULTS_SUBDIR, folder_name), exist_ok=True)
+for p_idx, per in enumerate(VARIABLES):
+    print(f"Processing temperature limits for {per}...")
 
     # Process each crop
     for idx in CROPPING_CAL.index:
@@ -101,8 +96,7 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
         tmin_files = []
         for month_abbr in month_abbrs:
             tmin_files.extend([f for f in input_files_tmin
-                               if month_abbr in os.path.basename(f)
-                               and "Monthly_Mean" in f])
+                               if month_abbr in os.path.basename(f) in f])
 
         # Filter tmax files for these months with specified percentiles
         tmax_files = []
@@ -174,9 +168,12 @@ for p_idx, p_val in enumerate(T_PERC + ["Monthly_Mean"]):
 
             # Save output
             season_label = f"{month_abbrs[0]}-{month_abbrs[-1]}"
+            folder_name = f"Tmax_{per}"
             output_path = os.path.join(
                 NEW_RESULTS_SUBDIR, folder_name,
                 f"Temp_between_{t_base}_and_{t_upper}°C_{crop_name}_{season_label}.tif")
+            os.makedirs(os.path.join(NEW_RESULTS_SUBDIR,
+                        folder_name), exist_ok=True)
 
             # Update metadata for output raster. Set all nodata values to 0.
             meta.update({

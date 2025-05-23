@@ -1,28 +1,27 @@
 import os
 import glob
+import re
 import calendar
-import rasterio
 import numpy as np
-import xarray as xr
-import geopandas as gpd
+import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.mask import mask
-from rasterio.transform import from_origin
+import geopandas as gpd
 import matplotlib.pyplot as plt
 
 
 """
-This script processes temperature data files by:
-1. Reading monthly temperature data from NetCDF files
+Python conversion of the R script '01c_Resample_files_Rainfall.R'
+This script processes monthly rainfall data by:
+1. Reading monthly rainfall TIFs
 2. Calculating monthly means across years
 3. Cropping to a buffered province boundary
 4. Resampling to match a reference DEM
-5. Applying lapse rate correction based on elevation
-6. Saving the processed data
+5. Saving the processed data
 """
 
 ####################################################################################################
-########################## Define directories and file paths #######################################
+###################### Define directories, constants and file paths ################################
 ####################################################################################################
 # Define current and parent working directories
 current_wd = os.getcwd()
@@ -41,33 +40,24 @@ RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 
-# Define constants
-RES = 250  # Resolution in meters
-NO_DATA_VALUE = -9999.0  # No data value
+# Set constants
+NO_DATA_VALUE = -9999.0
+RES = 250  # Set resolution
 LOCAL_PROJ = "EPSG:32636"  # Local projection
 
-# Define temperature variables
-T_VARS = ["Tavg", "Tmin", "Tmax_P75", "Tmax_P95",
-          "Tmax_Mean"]  # Temperature variables to process
-T_LAPSE_RATE = -0.0065  # Temperature lapse rate (°C/m)
-
-# Month abbreviations for output file naming
-month_abbrs = [calendar.month_abbr[i] for i in range(1, 13)]
-
 # Define input and output paths
-INPUT_FILES = glob.glob(os.path.join(DATA_DIR, "Temperature", "*.tif"))
-T_VARS = [os.path.basename(file)[:-12] for file in INPUT_FILES]
-RESULTS_TEMPERATURE_DIR = os.path.join(RESULTS_DIR, "Temperature")
-os.makedirs(RESULTS_TEMPERATURE_DIR, exist_ok=True)
+INPUT_FILES = glob.glob(os.path.join(DATA_DIR, "Precipitation", "*.tif"))
+RESULTS_RAINFALL_DIR = os.path.join(RESULTS_DIR, "Rainfall")
+os.makedirs(RESULTS_RAINFALL_DIR, exist_ok=True)
 
 
 ####################################################################################################
 ####################### Loading DEM and province shapefile #########################################
+####################################################################################################
 # Import DEM for reference extent and resolution
 DEM_PATH = os.path.join(RESULTS_DIR, "DEM", f"DEM_{PROVINCE_NAME}_{RES}m.tif")
 
 with rasterio.open(DEM_PATH) as dem_src:
-    DEM_DATA = dem_src.read(1)
     DEM_PROFILE = dem_src.profile.copy()
     DEM_BOUNDS = dem_src.bounds
     DEM_TRANSFORM = dem_src.transform
@@ -83,36 +73,39 @@ province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
 
 ####################################################################################################
-########################## Check Temperature files and add lapse reate #############################
+################################# Calculate monthly mean rainfall #################################
 ####################################################################################################
-for i, (file_name, var) in enumerate(zip(INPUT_FILES, T_VARS)):
-    # Load temperature file
-    print(f"Processing {var} temperature data...")
+# Calculate mean rainfall for each month
+print("Processing rainfall data...")
+MONTH_ABBRS = [calendar.month_abbr[i] for i in range(1, 13)]
 
-    # Create output directory
-    var_results_subdir = os.path.join(RESULTS_TEMPERATURE_DIR, var)
-    os.makedirs(var_results_subdir, exist_ok=True)
+# Process each file
+for file in INPUT_FILES:
+    # Extract output name from the filename
+    file_name = os.path.basename(file).split(".")[0]
+    folder_name = file_name[:-8]
+    os.makedirs(os.path.join(RESULTS_RAINFALL_DIR, folder_name), exist_ok=True)
 
     # Process each month (band) in the rainfall geotiff
-    with rasterio.open(file_name) as src:
+    with rasterio.open(file) as src:
         num_bands = src.count
 
         for i in range(1, num_bands + 1):
             # Read the data and profile
-            temperature_data = src.read(i)
-            temperature_profile = src.profile
+            rainfall_data = src.read(i)
+            rainfall_profile = src.profile
 
             # Get the month abbreviation
-            month = month_abbrs[i-1]
-            print(f"  Processing {var} for {month}...")
+            month = MONTH_ABBRS[i-1]
+            print(f"  Processing {folder_name[-3:]} rainfall for {month}...")
 
             # Create empty destination array
             destination_array = np.full(
-                (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=temperature_data.dtype)
+                (DEM_HEIGHT, DEM_WIDTH), NO_DATA_VALUE, dtype=rainfall_data.dtype)
 
             # Reproject and write
             reproject(
-                source=temperature_data,
+                source=rainfall_data,
                 destination=destination_array,
                 src_transform=src.transform,
                 src_crs=src.crs,
@@ -144,17 +137,11 @@ for i, (file_name, var) in enumerate(zip(INPUT_FILES, T_VARS)):
                         'transform': masked_transform,
                     })
 
-            # Apply lapse rate correction based on elevation difference
-            no_data_mask = masked_data != NO_DATA_VALUE
-            final_data = np.where(
-                no_data_mask, destination_array + DEM_DATA * T_LAPSE_RATE, NO_DATA_VALUE)
+            # Save the final masked, resampled and reprojected file
+            OUTPUT_PATH = os.path.join(
+                RESULTS_RAINFALL_DIR, folder_name, f"{folder_name}_{month}.tif")
+            with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
+                dst.write(masked_data)
 
-            # Save final temperature raster
-            output_path = os.path.join(
-                var_results_subdir, f"{var}_{month}.tif")
-            with rasterio.open(output_path, 'w', **masked_profile) as dst:
-                dst.write(final_data)
 
-    print(f"Completed processing {var} temperature data")
-
-print("Temperature data processing complete!")
+print("Rainfall resampling complete!")
