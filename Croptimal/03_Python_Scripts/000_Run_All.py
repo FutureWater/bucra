@@ -141,6 +141,7 @@ def main():
                 #myenv["RESOLUTION"] = RES
                 myenv["CWD"] = CURRENT_WD
                 myenv["LOCAL_PROJ"] = LOCAL_PROJ
+                myenv["CROPPING_CALENDER"] = CROPPING_CALENDER
 
                 # Try to run code with subprocess. When script fails, print error message.
                 try:

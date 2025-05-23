@@ -26,7 +26,8 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-# PROVINCE_NAME = "Sharkia"                         # dummy variable for testing.
+if not os.environ.get("PROVINCE"):
+    PROVINCE_NAME = "Sharkia"                           # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(parent_wd, "01_Data")
@@ -46,8 +47,7 @@ NO_DATA_VALUE = -9999.0  # No data value
 VARIABLES = ['P75', 'P95', 'Mean']  # Percentiles to process
 
 # Load cropping calendar and parameters
-CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ";")
-CROPPING_CAL_ANG = pd.read_csv(os.path.join(current_wd, "Cropping_calendar_angola.csv"))
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ",")
 PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 
@@ -72,8 +72,8 @@ for p_idx, per in enumerate(VARIABLES):
     for idx in CROPPING_CAL.index:
         crop_data = CROPPING_CAL.loc[idx]
         crop_name = crop_data["Crop"]
-        start_month = crop_data["Start_growing_season"]
-        end_month = crop_data["End_growing_season"]
+        start_month = int(crop_data["Start_growing_season"])
+        end_month = int(crop_data["End_growing_season"])
 
         # Determine months in growing season
         if start_month > end_month:
@@ -128,27 +128,28 @@ for p_idx, per in enumerate(VARIABLES):
             tmax_valid = np.zeros(shape, dtype=bool)
             meta = src.meta.copy()
 
-        # Sum all tmin data. Add zero for invalid cells.
+        # Get weighted average of Tmin for whole growing period. 
         for i, tmin_file in enumerate(tmin_files_ordered):
             with rasterio.open(tmin_file) as src:
                 tmin_data = src.read(1)
                 mask = tmin_data != NO_DATA_VALUE
-                tmin_data[mask] *= weights[i]  # only multiply valid cells.
-                tmin_data[~mask] = 0
-                tmin_w_data += tmin_data
-                tmin_valid |= mask  # Update total validity mask.
+                tmin_data[mask] *= weights[i]   # Only multiply valid cells in the month.
+                tmin_data[~mask] = 0            # Set invalid cells to zero.
+                tmin_w_data += tmin_data        # Sum all weighted values to get the average.
+                tmin_valid |= mask              # Update total validity mask.
+                
         # Set cells that were invalid in all rasters to no data value.
         tmin_w_data[~tmin_valid] = NO_DATA_VALUE
 
-        # Sum all tmax data. Add zero for invalid cells.
+        # Get weighted average of Tmax for whole growing period. Add zero for invalid cells.
         for i, tmax_file in enumerate(tmax_files_ordered):
             with rasterio.open(tmax_file) as src:
                 tmax_data = src.read(1)
                 mask = tmax_data != NO_DATA_VALUE
-                tmax_data[mask] *= weights[i]  # only multiply valid cells.
-                tmax_data[~mask] = 0
-                tmax_w_data += tmax_data
-                tmax_valid |= mask
+                tmax_data[mask] *= weights[i]   # Only multiply valid cells.
+                tmax_data[~mask] = 0            # Set invalid cells to zero.
+                tmax_w_data += tmax_data        # Sum all weighted values to get the average.
+                tmax_valid |= mask              # Update total validity mask.
 
         # Set cells that were invalid in all rasters to no data value.
         tmax_w_data[~tmax_valid] = NO_DATA_VALUE

@@ -27,7 +27,8 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-# PROVINCE_NAME = "Alexandria"                         # dummy variable for testing.
+if not os.environ.get("PROVINCE"):
+    PROVINCE_NAME = "Sharkia"                            # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(parent_wd, "01_Data")
@@ -49,7 +50,7 @@ T_PERC_NAMES = ["Warmer", "Much Warmer"]  # Names for temperature scenarios
 
 
 # Create a mock cropping calendar (replace with actual data loading)
-CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ";")
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ",")
 PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 ####################################################################################################
@@ -60,7 +61,7 @@ new_dir = os.path.join(RESULTS_DIR, "_LS_Results", "Weighted")
 os.makedirs(new_dir, exist_ok=True)
 
 # Get input files for each parameter
-input_files_ndvi = glob.glob(os.path.join(RESULTS_DIR,
+input_file_ndvi = glob.glob(os.path.join(RESULTS_DIR,
                                           "_LS_Results", "NDVI", "*.tif"))
 input_files_temperature = glob.glob(os.path.join(RESULTS_DIR,
                                                  "_LS_Results", "Temperature", "**", "*.tif"), recursive=True)
@@ -103,15 +104,6 @@ for _, crop_row in CROPPING_CAL.iterrows():
         # Create output filename
         file_name = f"Land_Suitability_{warm}_{crop}_{start_month}-{end_month}.tif"
 
-        # Find and load each parameter file with appropriate weighting
-        # NDVI
-        ndvi_pattern = f"{start_month}-{end_month}"
-        ndvi_file = find_file(input_files_ndvi, ndvi_pattern)
-        if not ndvi_file:
-            print(
-                f"  NDVI file not found for {crop}, {start_month}-{end_month}")
-            continue
-
         # Temperature
         temp_pattern = f"{crop}_{start_month}-{end_month}"
         temp_files = [
@@ -148,7 +140,7 @@ for _, crop_row in CROPPING_CAL.iterrows():
                                     == 'Slope', 'Weight'].values[0]
 
         # Read and apply weights to each layer
-        with rasterio.open(ndvi_file) as src:
+        with rasterio.open(input_file_ndvi[0]) as src:
             ndvi_data = src.read(1) * ndvi_weight
             output_meta = src.meta.copy()
 

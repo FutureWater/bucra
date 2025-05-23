@@ -25,7 +25,8 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-# PROVINCE_NAME = "Alexandria"                         # dummy variable for testing.
+if not os.environ.get("PROVINCE"):
+    PROVINCE_NAME = "Sharkia"                      # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(parent_wd, "01_Data")
@@ -43,7 +44,7 @@ LOCAL_PROJECTION = "EPSG:32636"
 
 
 # Load cropping calendar and parameters
-CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ';')
+CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ',')
 PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
 
 
@@ -75,73 +76,48 @@ for folder in PARAMS['LS_Results_Folder'].unique():
         ndvi_files = glob.glob(os.path.join(
             RESULTS_DIR, "NDVI", 'Mean_Monthly', "*.tif"))
 
-        # Process each crop's growing season
-        for _, crop_row in CROPPING_CAL.iterrows():
-            start_month = crop_row['Start_growing_season']
-            end_month = crop_row['End_growing_season']
-            crop = crop_row['Crop']
+        # Find NDVI files for the whole year
+        ndvi_files = glob.glob(os.path.join(RESULTS_DIR, "NDVI", 'Mean_Monthly', "*.tif"))
 
-            # Determine months in growing season
-            if start_month > end_month:
-                months = list(range(start_month, 13)) + \
-                    list(range(1, end_month + 1))
-            else:
-                months = list(range(start_month, end_month + 1))
+        if not ndvi_files:
+            print(f"  No NDVI files found")
+            continue
 
-            month_abbrs = [calendar.month_abbr[m] for m in months]
+        # Sum all NDVI
+        all_ndvi = None
+        for i, ndvi_file in enumerate(ndvi_files):
+            with rasterio.open(ndvi_file) as src:
+                ndvi_data = src.read(1)
+                
+                # Initialize arrays
+                if all_ndvi is None:   
+                    all_ndvi = np.zeros((len(ndvi_files), ndvi_data.shape[0], ndvi_data.shape[1]), dtype=np.float32)
+                    ndvi_meta = src.meta.copy()
 
-            # Find NDVI files for these months
-            season_ndvi_files = []
-            for month_abbr in month_abbrs:
-                season_ndvi_files.extend(
-                    [f for f in ndvi_files if month_abbr in os.path.basename(f)])
+                # Add NDVI data to 3d array
+                all_ndvi[i] = ndvi_data
 
-            if not season_ndvi_files:
-                print(f"  No NDVI files found for months {month_abbrs}")
-                continue
+        # Calculate max NDVI per cell for the whole year.
+        max_ndvi = np.nanmax(all_ndvi, axis=0)
 
-            # Sum all NDVI for the whole season
-            ndvi_sum = None
-            for ndvi_file in season_ndvi_files:
-                with rasterio.open(ndvi_file) as src:
-                    ndvi_data = src.read(1)
-                    if ndvi_sum is None:
-                        # Initialize arrays
-                        ndvi_sum = np.zeros(ndvi_data.shape, dtype=np.float32)
-                        ndvi_valid = np.zeros(ndvi_data.shape, dtype=bool)
-                        ndvi_meta = src.meta.copy()
+        # Apply limit
+        # Assuming NDVI is the last parameter
+        limit_value = float(limits[0])
+        ndvi_limit = (max_ndvi > limit_value)
+        ndvi_limit = ndvi_limit.astype(np.uint8)
 
-                    # Only add valid cells. Add zero for non valid cells. Update valid mask.
-                    mask = ndvi_data != NO_DATA_VALUE
-                    ndvi_data[~mask] = 0
-                    ndvi_sum += ndvi_data
-                    ndvi_valid |= mask
+        # Save output
+        output_path = os.path.join(
+            new_results_subdir,
+            f"NDVI_limit_higher_{limits[0].replace('.', '')}_.tif"
+        )
 
-            # Calculate mean NDVI for the whole season
-            ndvi_mean = np.full(
-                ndvi_sum.shape, NO_DATA_VALUE, dtype=np.float32)
-            ndvi_mean[ndvi_valid] = ndvi_sum[ndvi_valid] / \
-                len(season_ndvi_files)
+        out_profile = ndvi_meta.copy()
+        out_profile.update({'dtype': 'uint8',
+                            'nodata': 0})
 
-            # Apply limit
-            # Assuming NDVI is the last parameter
-            limit_value = float(limits[0])
-            ndvi_limit = (ndvi_mean > limit_value) & ndvi_valid
-            ndvi_limit = ndvi_limit.astype(np.uint8)
-
-            # Save output
-            output_path = os.path.join(
-                new_results_subdir,
-                f"NDVI_limit_higher_{limits[0].replace('.', '')}_{crop}_"
-                f"{calendar.month_abbr[start_month]}-{calendar.month_abbr[end_month]}.tif"
-            )
-
-            out_profile = ndvi_meta.copy()
-            out_profile.update({'dtype': 'uint8',
-                             'nodata': 0})
-
-            with rasterio.open(output_path, 'w', **out_profile) as dst:
-                dst.write(ndvi_limit, 1)
+        with rasterio.open(output_path, 'w', **out_profile) as dst:
+            dst.write(ndvi_limit, 1)
 
     ############## Process soil nutrient content ##############
     elif folder == "Soil_Nutrient_Content":
@@ -188,66 +164,66 @@ for folder in PARAMS['LS_Results_Folder'].unique():
                     dst.write(limit_raster, 1)
 
     # ############## Process soil hydraulic properties ##############
-    if folder == "Soil_Hydraulic_Properties":
-        print(f"Processing {folder}...")
-        # Load HHS data files that match parameters
-        hhs_files = []
-        for param in parameters:
-            hhs_files.extend(glob.glob(os.path.join(
-                HHS_DATA_DIR, "*.tif")))
+    # if folder == "Soil_Hydraulic_Properties":
+    #     print(f"Processing {folder}...")
+    #     # Load HHS data files that match parameters
+    #     hhs_files = []
+    #     for param in parameters:
+    #         hhs_files.extend(glob.glob(os.path.join(
+    #             HHS_DATA_DIR, "*.tif")))
 
-        # Load and process each HHS parameter
-        for param in parameters:
-            print(f"  Processing {param}...")
+    #     # Load and process each HHS parameter
+    #     for param in parameters:
+    #         print(f"  Processing {param}...")
 
-            # Set multiplier based on parameter
-            MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
+    #         # Set multiplier based on parameter
+    #         MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
 
-            # Get limit and unit for this parameter
-            idx = parameters.index(param)
-            limit = limits[idx]
-            unit = units[idx]
+    #         # Get limit and unit for this parameter
+    #         idx = parameters.index(param)
+    #         limit = limits[idx]
+    #         unit = units[idx]
 
-            # Find topsoil and subsoil files and read data
-            topsoil_file = None
-            subsoil_file = None
-            for file in hhs_files:
-                if param in file:
-                    # Open topsoil and subsoil files
-                    if "TOPSOIL" in file:
-                        topsoil_file = file
-                        with rasterio.open(topsoil_file) as src:
-                            topsoil_data = src.read(1)
-                            topsoil_profile = src.profile.copy()
-                    elif "SUBSOIL" in file:
-                        subsoil_file = file
-                        with rasterio.open(subsoil_file) as src:
-                            subsoil_data = src.read(1)
+    #         # Find topsoil and subsoil files and read data
+    #         topsoil_file = None
+    #         subsoil_file = None
+    #         for file in hhs_files:
+    #             if param in file:
+    #                 # Open topsoil and subsoil files
+    #                 if "TOPSOIL" in file:
+    #                     topsoil_file = file
+    #                     with rasterio.open(topsoil_file) as src:
+    #                         topsoil_data = src.read(1)
+    #                         topsoil_profile = src.profile.copy()
+    #                 elif "SUBSOIL" in file:
+    #                     subsoil_file = file
+    #                     with rasterio.open(subsoil_file) as src:
+    #                         subsoil_data = src.read(1)
 
-            if not topsoil_file or not subsoil_file:
-                print(f"  Missing soil data for {param}")
-                continue
+    #         if not topsoil_file or not subsoil_file:
+    #             print(f"  Missing soil data for {param}")
+    #             continue
 
-            # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
-            weighted_topsoil = topsoil_data * 0.3
-            weighted_subsoil = subsoil_data * 1.7
-            weighted_avg = (weighted_topsoil +
-                            weighted_subsoil) / 2 * MULTIPLIER
+    #         # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
+    #         weighted_topsoil = topsoil_data * 0.3
+    #         weighted_subsoil = subsoil_data * 1.7
+    #         weighted_avg = (weighted_topsoil +
+    #                         weighted_subsoil) / 2 * MULTIPLIER
 
-            # Apply limit
-            limit_value = float(limit)
-            limit_raster = (weighted_avg > limit_value).astype(np.uint8)
+    #         # Apply limit
+    #         limit_value = float(limit)
+    #         limit_raster = (weighted_avg > limit_value).astype(np.uint8)
 
-            # Save output
-            output_path = os.path.join(
-                new_results_subdir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
-            out_profile = topsoil_profile.copy()
-            out_profile.update({
-                'dtype': 'uint8',
-                'count': 1
-            })
+    #         # Save output
+    #         output_path = os.path.join(
+    #             new_results_subdir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
+    #         out_profile = topsoil_profile.copy()
+    #         out_profile.update({
+    #             'dtype': 'uint8',
+    #             'count': 1
+    #         })
 
-            with rasterio.open(output_path, 'w', **out_profile) as dst:
-                dst.write(limit_raster, 1)
+    #         with rasterio.open(output_path, 'w', **out_profile) as dst:
+    #             dst.write(limit_raster, 1)
 
 print("Parameter limits calculation complete!")

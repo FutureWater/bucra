@@ -33,7 +33,8 @@ angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Complete
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
-# PROVINCE_NAME = "Sharkia"                         # dummy variable for testing.
+if not os.environ.get("PROVINCE"):
+    PROVINCE_NAME = "Sharkia"                           # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(parent_wd, "01_Data")
