@@ -1,0 +1,15 @@
+name: croptimalenv
+channels:
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - geopandas
+  - python=3.10
+  - fiona
+  - gdal
+  - rasterio
+  - rasterstats
+  # - xarray=2023.10.0
+  - ipykernel
+  - rioxarray
+prefix: /Users/thomasfuturewater/miniconda3/envs/croptimalenv
