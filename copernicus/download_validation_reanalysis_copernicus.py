@@ -8,6 +8,10 @@ request = {
         "2018",
         "2019",
         "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024",
     ],
     "month": ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"],
     "time": ["00:00"],
@@ -18,7 +22,7 @@ request = {
         "minimum_2m_temperature_in_the_last_24_hours",
         "maximum_2m_temperature_in_the_last_24_hours",
     ],
-    "area": [31.8, 28.4, 28, 31.4],
+    "area": [31.7, 24.5, 22, 37],
 }
 target = "GRIB_data/reanalysis_validation_copernicus.grib"
 

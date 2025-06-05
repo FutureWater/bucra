@@ -50,21 +50,15 @@ def reshape_projections(data):
     - **xarray.Dataset**:
       The reshaped dataset with adjusted time indices.
     """
-    # ds_reshape = data.copy(deep=True)
-    # fcsize = data.forecastMonth.size
-    #     for i, fcmonth in enumerate(data.forecastMonth):
-    #         for j in range(len(data.time[fcsize:])):
-    #             ds_reshape.t2m[:, i, j + fcsize, :, :] = data.t2m[
-    #                 :, i, j + fcsize - fcmonth, :, :
-    #             ]
-
+    # This code cuts off part of the data (and a bit too much).
+    # This does not matter as the full first year of data is discarded later regardless.
     ds_reshape = data.copy(deep=True)
     fcsize = data.forecastMonth.size
     for var in data.data_vars:
         for i, fcmonth in enumerate(data.forecastMonth):
             for j in range(len(data.time[fcsize:])):
                 ds_reshape[var][:, i, j + fcsize, :, :] = data[var][
-                    :, i, j + fcsize - fcmonth, :, :
+                    :, i, j + fcsize - i, :, :
                 ]
 
     ds_reshape = ds_reshape.drop_isel(time=range(0, fcsize))
@@ -133,11 +127,3 @@ if __name__ == "__main__":
     print(null_count.values)
     ds_reshape = reshape_projections(ds)
     plot_temperature_with_borders(ds_reshape, 1, 1)
-
-
-# ds_reshape = ds.copy(deep=True)
-# fcsize = ds.forecastMonth.size
-# for i, fcmonth in enumerate(ds.forecastMonth):
-#     for j in range(len(ds.time[fcsize:])):
-#         ds_reshape.t2m[:, i, j + fcsize, :, :] = ds.t2m[:, i, j + fcsize - (i + 1), :, :]
-# ds_reshape = ds_reshape.drop_isel(time=range(0, 6))

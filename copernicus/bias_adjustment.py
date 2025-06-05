@@ -2,21 +2,44 @@
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from ibicus.debias import QuantileMapping, ISIMIP, QuantileDeltaMapping
+from ibicus.debias import (
+    QuantileMapping,
+    ISIMIP,
+    QuantileDeltaMapping,
+    ECDFM,
+    ScaledDistributionMapping,
+    CDFt,
+)
 import xarray as xr
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
-
 #################
-### LOAD DATA ###
+### VARIABLES ###
 #################
 reanalysis_hindcast_netcdf_path = "NetCDF_data/reanalysis_hindcast_copernicus.nc"
 reanalysis_validation_netcdf_path = "NetCDF_data/reanalysis_validation_copernicus.nc"
 projections_hindcast_netcdf_path = "NetCDF_data/ECMWF_hindcast_projections.nc"
 projections_validation_netcdf_path = "NetCDF_data/ECMWF_validation_projections.nc"
 
+# Test t2m (average temperature).
+# mn2t24 (min. average temperature) or mx2t24(max. average temperature) can be analyzed
+# if monthly data for these is available in all four NetCDF files above.
+VARIABLE = "t2m"
+
+# Variable for the debiaser: "tas", "tasmin", "tasmax", based on
+# respectively mean, min, and max temp data
+IBICUS_VAR = "tas"
+
+# Gridcell location of Qahbunah in the data
+QAHBUNAH_X = 7
+QAHBUNAH_Y = 0
+
+
+#################
+### LOAD DATA ###
+#################
 reanalysis_hindcast_ds = xr.open_dataset(reanalysis_hindcast_netcdf_path)
 reanalysis_validation_ds = xr.open_dataset(reanalysis_validation_netcdf_path)
 projections_hindcast_ds = xr.open_dataset(projections_hindcast_netcdf_path)
@@ -31,14 +54,12 @@ reanalysis_hindcast_ds = reanalysis_hindcast_ds.interp_like(projections_hindcast
 reanalysis_validation_ds = reanalysis_validation_ds.interp_like(projections_validation_ds)
 
 # Convert to numpy arrays to work with ibicus
-reanalysis_hindcast_np = reanalysis_hindcast_ds["t2m"].to_numpy()  # (time, lat, lon)
-reanalysis_validation_np = reanalysis_validation_ds["t2m"].to_numpy()  # (time, lat, lon)
-projections_hindcast_np = projections_hindcast_ds[
-    "t2m"
-].to_numpy()  # (leadtime, time, lat, lon)
-projections_validation_np = projections_validation_ds[
-    "t2m"
-].to_numpy()  # (lead-time, time, lat, lon)
+# (time, lat, lon)
+reanalysis_hindcast_np = reanalysis_hindcast_ds[VARIABLE].to_numpy()
+reanalysis_validation_np = reanalysis_validation_ds[VARIABLE].to_numpy()
+# (leadtime, time, lat, lon)
+projections_hindcast_np = projections_hindcast_ds[VARIABLE].to_numpy()
+projections_validation_np = projections_validation_ds[VARIABLE].to_numpy()
 
 
 #######################
@@ -51,39 +72,38 @@ def apply_debiaser(debiaser):
             reanalysis_hindcast_np,
             projections_hindcast_np[i],
             projections_validation_np[i],
+            time_obs=reanalysis_hindcast_ds.time.values,
+            time_cm_hist=projections_hindcast_ds.time.values,
+            time_cm_future=projections_validation_ds.time.values,
         )
     return output
 
 
 # Quartile Mapping adjustment (good base)
-QM_debiaser = QuantileMapping.from_variable("tas")
+QM_debiaser = QuantileMapping.from_variable(IBICUS_VAR)
 QM_val = apply_debiaser(QM_debiaser)
 
 
-# ISIMIP (advanced method)
-ISIMIP_debiaser = ISIMIP.from_variable("tas")
+# ISIMIP
+ISIMIP_debiaser = ISIMIP.from_variable(IBICUS_VAR)
+ISIMIP_debiaser.detrending = False
 ISIMIP_val = apply_debiaser(ISIMIP_debiaser)
 
-# QuantileDeltaMapping (advanced version of ECDFM, uses a running window)
-QDM_debiaser = QuantileDeltaMapping.from_variable("tas")
+# QuantileDeltaMapping
+QDM_debiaser = QuantileDeltaMapping.from_variable(IBICUS_VAR)
 QDM_val = apply_debiaser(QDM_debiaser)
 
+# ECDFM
+ECDFM_debiaser = ECDFM.from_variable(IBICUS_VAR)
+ECDFM_val = apply_debiaser(ECDFM_debiaser)
 
-# %%
-# Bias evaluation
-# TODO:
-# - Threshold analysis for crop thesholds spatially (per leadtime)
-# - Bias evaluation for full dataset spatially (per leadtime)
-# - Previous two bias evaluations but done per calendar month so see temporal distribution of bias
-#       If a one-dimensional metric can be devised, you can plot the calendar month v leadtime bias in a heatmap
+# # Scaled Distribution Mapping
+SDM_debiaser = ScaledDistributionMapping.from_variable(IBICUS_VAR)
+SDM_val = apply_debiaser(SDM_debiaser)
 
-# %%
-# TODO:
-# - Compare more methods using ibicus evaluation and find the best
-# - By hand threshold analysis, apply over corrected and base ds
-#       - Per location true false for threshold,
-#       - Select cell with farm: sum per calendar month, show result in heatmap leadtime v month)
-# - Plot like above but for MAE throughout the year for different leadtimes
+# # CDFt (Cumulative Distribution Function transform)
+CDFt_debiaser = CDFt.from_variable(IBICUS_VAR)
+CDFt_val = apply_debiaser(CDFt_debiaser)
 
 # %%
 ######################
@@ -91,8 +111,38 @@ QDM_val = apply_debiaser(QDM_debiaser)
 ######################
 
 
+def calculate_treshold_exceedances_list(df, thresholds_list):
+    threshold_map = np.full_like(df, False, dtype=bool)  # Fill with False
+    for i in range(df.shape[1]):
+        for entry in thresholds_list:
+            if (i + 1) % 12 == entry[0]:
+                # Assign the boolean mask to the corresponding frame
+                threshold_map[:, i, :, :] = (df[:, i] < entry[1]) | (df[:, i] > entry[2])
+    data = np.zeros((6, 12))
+    for i, _ in enumerate(threshold_map[:, 0, 0, 0]):
+        for j, _ in enumerate(threshold_map[0, :, 0, 0]):
+            data[i, j % 12] = (
+                data[i, j % 12] + threshold_map[i, j, QAHBUNAH_Y, QAHBUNAH_X]
+            )
+    return data
+
+
+def calculate_treshold_exceedances_list_obs(df, thresholds_list):
+    threshold_map = np.full_like(df, False, dtype=bool)  # Fill with False
+    # obs_df shape: (time, lat, lon)
+    for i in range(df.shape[0]):
+        for entry in thresholds_list:
+            if (i + 1) % 12 == entry[0]:
+                # Assign the boolean mask to the corresponding frame
+                threshold_map[i] = (df[i] < entry[1]) | (df[i] > entry[2])
+    data = np.zeros(12)
+    for j in range(df.shape[0]):
+        data[j % 12] = data[j % 12] + threshold_map[j, QAHBUNAH_Y, QAHBUNAH_X]
+    return data
+
+
 def calculate_threshold_exceedances_per_leadtime_month(df, threshold):
-    threshold_map = (df > threshold[0]) & (df < threshold[1])
+    threshold_map = (df < threshold[0]) | (df > threshold[1])
     data = np.zeros((6, 12))
     for i, _ in enumerate(threshold_map[:, 0, 0, 0]):
         for j, _ in enumerate(threshold_map[0, :, 0, 0]):
@@ -134,7 +184,7 @@ def plot_heatmap(data, title, colorbar_label, decimals=1):
         df,
         annot=True,
         fmt=f".{decimals}f",
-        cmap="coolwarm",
+        cmap="viridis",
         cbar_kws={"label": colorbar_label},
     )
     plt.title(title)
@@ -144,16 +194,27 @@ def plot_heatmap(data, title, colorbar_label, decimals=1):
 
 
 sample_threshold = [294, 313]
-QM_threshold = calculate_threshold_exceedances_per_leadtime_month(
-    QM_val, sample_threshold
+
+# (month, low threshold, high treshold)
+thresholds_rice = [
+    (5, 13, 35),
+    (6, 13, 35),
+    (7, 20, 35),
+    (8, 20, 35),
+    (9, 20, 35),
+]
+QDM_val_C = QDM_val - 273.15
+reanalysis_validation_np_C = reanalysis_validation_np - 273.15
+QDM_threshold = calculate_treshold_exceedances_list(QDM_val_C, thresholds_rice)
+# raw_threshold = calculate_threshold_exceedances_per_leadtime_month(
+#     projections_validation_np, sample_threshold
+# )
+
+# QDM_threshold = calculate_threshold_exceedances_per_leadtime_month(QDM_val, sample_threshold)
+obs_threshold = calculate_treshold_exceedances_list_obs(
+    reanalysis_validation_np_C, thresholds_rice
 )
-raw_threshold = calculate_threshold_exceedances_per_leadtime_month(
-    projections_validation_np, sample_threshold
-)
-obs_threshold = calculate_threshold_exceedances_per_month(
-    reanalysis_validation_np, sample_threshold
-)
-diff_threshold = QM_threshold - obs_threshold
+diff_threshold = QDM_threshold - obs_threshold
 
 plot_heatmap(
     diff_threshold,
@@ -161,7 +222,43 @@ plot_heatmap(
     "Threshold Exceedances",
     0,
 )
+
+
 # %%
+def plot_heatmap(data, title, colorbar_label, decimals=1):
+    df = pd.DataFrame(
+        data,
+        columns=[
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+        ],
+    )
+    df.index = [f"Leadtime {i + 1}" for i in range(data.shape[0])]
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(
+        df,
+        annot=True,
+        fmt=f".{decimals}f",
+        cmap="viridis",
+        cbar_kws={"label": colorbar_label},
+        vmin=0,
+        vmax=4.1,
+    )
+    plt.title(title)
+    plt.xlabel("Month")
+    plt.ylabel("Leadtime")
+    plt.show()
 
 
 ## MAE per leadtime per month
@@ -170,7 +267,7 @@ def calculate_MAE_per_leadtime_month(df):
     data = np.zeros((6, 12))
     for i, _ in enumerate(AE_map[:, 0, 0, 0]):
         for j, _ in enumerate(AE_map[0, :, 0, 0]):
-            data[i, j % 12] = data[i, j % 12] + AE_map[i, j, 1, 3]
+            data[i, j % 12] = data[i, j % 12] + AE_map[i, j, QAHBUNAH_Y, QAHBUNAH_X]
     # Since means can be summed over multiple years, divide by number of years in the data
     data = data / (reanalysis_validation_np.shape[0] / 12)
     return data
@@ -180,13 +277,28 @@ MAE_leadtime_month = calculate_MAE_per_leadtime_month(projections_validation_np)
 plot_heatmap(MAE_leadtime_month, "Raw AE per Leadtime and Month for Qabunah", "AE (K)")
 
 MAE_leadtime_month = calculate_MAE_per_leadtime_month(QM_val)
+print(f"QM Error sum: {MAE_leadtime_month.sum()}")
 plot_heatmap(MAE_leadtime_month, "QM AE per Leadtime and Month for Qabunah", "AE (K)")
 
-MAE_leadtime_month = calculate_MAE_per_leadtime_month(ISIMIP_val)
-plot_heatmap(MAE_leadtime_month, "ISIMIP AE per Leadtime and Month for Qabunah", "AE (K)")
+# MAE_leadtime_month = calculate_MAE_per_leadtime_month(ISIMIP_val)
+# plot_heatmap(
+#     MAE_leadtime_month,
+#     "ISIMIP (no detrending) AE per Leadtime and Month for Qabunah",
+#     "AE (K)",
+# )
 
 MAE_leadtime_month = calculate_MAE_per_leadtime_month(QDM_val)
+print(f"QDM Error sum: {MAE_leadtime_month.sum()}")
 plot_heatmap(MAE_leadtime_month, "QDM AE per Leadtime and Month for Qabunah", "AE (K)")
+
+# MAE_leadtime_month = calculate_MAE_per_leadtime_month(ECDFM_val)
+# plot_heatmap(MAE_leadtime_month, "ECDFM AE per Leadtime and Month for Qabunah", "AE (K)")
+
+# MAE_leadtime_month = calculate_MAE_per_leadtime_month(SDM_val)
+# plot_heatmap(MAE_leadtime_month, "SDM AE per Leadtime and Month for Qabunah", "AE (K)")
+
+# MAE_leadtime_month = calculate_MAE_per_leadtime_month(CDFt_val)
+# plot_heatmap(MAE_leadtime_month, "CDFt AE per Leadtime and Month for Qabunah", "AE (K)")
 # %%
 # MAE Maps
 ## Spatial MAE for all leadtimes
@@ -196,6 +308,9 @@ def plot_spatial_mae(data, suptitle):
     fig, axes = plt.subplots(
         2, 3, figsize=(25, 10), subplot_kw={"projection": ccrs.PlateCarree()}
     )
+    # Set extent to just Egypt (approximate bounds)
+    # for ax in axes.flat:
+    #     ax.set_extent([24, 36, 21, 32], crs=ccrs.PlateCarree())
     forecast_months = range(1, 7)
     fig.suptitle(suptitle, fontsize=30, fontweight="bold")
     for i, forecast_month in enumerate(forecast_months):
@@ -229,7 +344,7 @@ def abs_error_map(debiased_val):
             "latitude": projections_validation_ds.latitude,
             "longitude": projections_validation_ds.longitude,
         },
-        name="t2m",
+        name=VARIABLE,
     )
     return abs_error_map
 
@@ -243,3 +358,5 @@ plot_spatial_mae(raw_abs_error_map, "Raw MAE")
 plot_spatial_mae(QM_abs_error_map, "QM Bias corrected MAE")
 plot_spatial_mae(ISIMIP_abs_error_map, "ISIMIP Bias corrected MAE")
 plot_spatial_mae(QDM_abs_error_map, "QDM Bias corrected MAE")
+
+# %%

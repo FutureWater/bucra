@@ -1,145 +1,62 @@
-# Copernicus Bias Adjustment & Evaluation Toolkit
+# Copernicus Seasonal Forecasting Scripts – BUCRA
 
-This repository provides a workflow for downloading, converting, bias-adjusting, and evaluating Copernicus seasonal forecast and reanalysis data, with a focus on temperature (2m temperature, `t2m`). The workflow is designed for agricultural applications, such as crop threshold analysis and spatial/temporal error evaluation.
+This folder contains scripts and data for downloading, converting, bias-adjusting, and analyzing Copernicus seasonal forecast data. The workflow is divided into several steps, but for convenience, pre-converted data is provided so you can start with analysis immediately if desired.
 
----
+## 1. Data Download Scripts
 
-## Workflow Overview
+- `download_hindcast_projections_copernicus.py`
+- `download_hindcast_reanalysis_copernicus.py`
+- `download_validation_projections_copernicus.py`
+- `download_validation_reanalysis_copernicus.py`
 
-1. **Download Data**  
-   Download reanalysis and forecast (projections) data for both hindcast and validation periods from Copernicus using the provided scripts.
+These scripts download the necessary Copernicus data for error analysis and bias correction. **Before running these scripts, set up access to the Copernicus API** (see [Copernicus API instructions](https://cds.climate.copernicus.eu/how-to-api)).
 
-2. **Convert Data to NetCDF**  
-   Convert the downloaded GRIB files to NetCDF format and align/reshape the datasets for analysis.
+## 2. Data Conversion Script
 
-3. **Bias Adjustment**  
-   Apply bias adjustment methods (Quantile Mapping, ISIMIP, QuantileDeltaMapping) to the forecast data.
+- `convert_data.py`
 
-4. **Error & Bias Evaluation**  
-   Evaluate the performance of bias adjustment using threshold exceedance analysis, MAE (Mean Absolute Error), and spatial/temporal plots.
+This script converts downloaded GRIB data to NetCDF format. The original data has both a time and a lead-time dimension (plus longitude and latitude). The script reshapes the data so that the time dimension indicates the month for which the data is valid, and the lead-time dimension indicates how many months in advance the forecast was made. This makes it easier to compare forecasts for the same month from different lead-times. Note: The first six months of data are lost in reshaping, so the first year is removed from all datasets to keep them aligned and starting in January.
 
----
+## 3. Bias Adjustment and Error Analysis
 
-## File Descriptions & Usage Order
+- `bias_adjustment_analysis.ipynb`
 
-### 1. Download Data
+This Jupyter Notebook contains code for bias adjustment and analysis of the converted hindcast and validation data. You can run individual cells to generate specific figures or analyses. All error-analysis figures in the report and annex can be generated using this notebook as a template. The variable analyzed (e.g., mean, min, or max temperature) can be changed at the start of the script. **You do not need to run this script before retrieving the latest forecasts.**
 
-- **`download_hindcast_reanalysis_copernicus.py`**  
-  Downloads ERA5 reanalysis data for the hindcast period (historical years).
+## 4. Retrieving Latest Forecasts
 
-- **`download_validation_reanalysis_copernicus.py`**  
-  Downloads ERA5 reanalysis data for the validation period (recent years).
+- `retrieve_latest_copernicus.py`
 
-- **`download_hindcast_projections_copernicus.py`**  
-  Downloads ECMWF seasonal forecast (projections) for the hindcast period.
+This script downloads, debiases (where possible), and converts the latest six-month forecast available from the Copernicus Data Store via API. If min/max temperature observations are available, you can uncomment relevant code to enable debiasing for all variables. **Note:** If you change the selected area for Copernicus downloads, you must also redownload and convert the hindcast projections and reanalysis data for the same area for debiasing to work correctly. Follow the [Copernicus API instructions](https://cds.climate.copernicus.eu/how-to-api) to set up access.
 
-- **`download_validation_projections_copernicus.py`**  
-  Downloads ECMWF seasonal forecast (projections) for the validation period.
+## 5. Utilities
 
-- **`retrieve_latest_copernicus.py`**  
-  Downloads the latest available ECMWF seasonal forecast and processes the time coordinates.
+- `utils.py`
 
-**Usage:**  
-Run these scripts to populate the `GRIB_data/` directory with the required `.grib` files.
+Contains utility functions for loading and reshaping GRIB data, used by several scripts.
 
----
+## 6. Data
 
-### 2. Convert Data to NetCDF
+- `GRIB_data/` (folder)
+- `NetCDF_data/` (folder)
 
-- **`convert_data.py`**  
-  Loads the downloaded GRIB files, reshapes the forecast data for leadtime alignment, and saves all datasets as NetCDF files in `NetCDF_data/`.
-
-- **`utils.py`**  
-  Contains utility functions for loading Copernicus data (`load_copernicus_data`), reshaping projections (`reshape_projections`), and plotting.
-
-**Usage:**  
-Run `convert_data.py` after downloading all GRIB files.  
-You may use functions from `utils.py` in your own scripts for data loading and visualization.
+These folders contain sample downloaded and converted Copernicus data. They are also available on the GitHub branch. This allows you to use `bias_adjustment_analysis.ipynb` and `retrieve_latest_copernicus.py` without first downloading and converting data.
 
 ---
 
-### 3. Bias Adjustment
+**Typical Workflow:**
 
-- **`bias_adjustment.py`**  
-  Loads the NetCDF datasets, applies bias adjustment methods (using the `ibicus` library), and prepares bias-adjusted forecast arrays.  
-  Also includes functions for threshold analysis, MAE calculation, and plotting (heatmaps, spatial maps).
-
-**Usage:**  
-Run or adapt `bias_adjustment.py` to perform bias correction and analyze results.  
-Edit threshold values or analysis parameters as needed for your application.
-
----
-
-### 4. Error & Bias Evaluation
-
-- **`bias_adjustment.py`**  
-  (Continued) Contains code for:
-  - Threshold exceedance analysis (per leadtime and month)
-  - MAE calculation (per leadtime, month, and spatially)
-  - Visualization of results
-
-- **`error_analysis.py`**  
-  Example script for calculating and plotting absolute errors between projections and reanalysis data.
-
-- **`legacy_bias_eval.py`**  
-  Example of using custom metrics and marginal bias analysis (legacy code, may require adaptation).
-
----
-
-## Typical Usage Order
-
-1. **Download all required data**  
-   Run the four `download_*.py` scripts and `retrieve_latest_copernicus.py` as needed.
-
-2. **Convert and align data**  
-   Run `convert_data.py` to produce NetCDF files.
-
-3. **Bias adjustment and evaluation**  
-   Run `bias_adjustment.py` to apply bias correction and generate evaluation plots.
-
-4. **Further analysis**  
-   Use `error_analysis.py` and `legacy_bias_eval.py` for additional or custom analyses.
-
----
+1. Run the data download scripts to obtain raw Copernicus data (unless you use the provided data).
+2. Use `convert_data.py` to convert and reshape the data to NetCDF.
+3. Analyze and bias-adjust the data using `bias_adjustment_analysis.ipynb`.
+4. Retrieve and process the latest forecasts with `retrieve_latest_copernicus.py`.
 
 ## Dependencies
 
 - Python 3.x
-- [xarray](https://xarray.pydata.org/)
-- [cdsapi](https://cds.climate.copernicus.eu/api-how-to)
-- [cartopy](https://scitools.org.uk/cartopy/docs/latest/)
-- [matplotlib](https://matplotlib.org/)
-- [seaborn](https://seaborn.pydata.org/)
-- [ibicus](https://github.com/ibicus-org/ibicus) (for bias adjustment)
-- [pandas](https://pandas.pydata.org/)
-- [numpy](https://numpy.org/)
-- [requests](https://docs.python-requests.org/)
-- [dateutil](https://dateutil.readthedocs.io/)
+- requirements.txt
 
 Install dependencies with:
 ```sh
-pip install xarray cdsapi cartopy matplotlib seaborn ibicus pandas numpy requests python-dateutil
+pip install -r requirements.txt
 ```
-
----
-
-## Notes
-
-- **Copernicus API Key:**  
-  You must set up your [CDS API key](https://ads.atmosphere.copernicus.eu/how-to-api) for data downloads.
-- **Data Paths:**  
-  Adjust file paths in scripts as needed for your directory structure.
-- **Thresholds & Locations:**  
-  Update threshold values and grid cell indices in analysis scripts for your specific crop or region.
-
----
-
-## References
-
-- [Copernicus Climate Data Store](https://cds.climate.copernicus.eu/)
-- [ibicus bias adjustment library](https://github.com/ibicus-org/ibicus)
-
----
-
-**Contact:**  
-For questions or contributions, please open an issue or pull request on this repository.
