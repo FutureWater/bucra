@@ -77,12 +77,12 @@ def fuzzy_membership(raster, function_type, parameters):
     if np.all(result == raster):
         raise ValueError("Result raster is the same as input raster. Fuzzy logic not applied")
     
-    return result
+    return result.astype(np.float32)
 
 def plot_raster(raster, ):
-    plt.imshow(raster)
+    plt.imshow(np.ma.masked_where(raster < 0, raster), cmap='viridis')
     plt.colorbar()
-####################################################################################################
+##############################################################################
 ###################### Define directories, constants and file paths ################################
 ####################################################################################################
 # Define current and parent working directories
@@ -136,11 +136,41 @@ for folder in PARAMS['LS_Results_Folder'].unique():
     os.makedirs(new_results_subdir, exist_ok=True)
 
     # Skip folders handled in other scripts
-    if folder in ["Elevation", "Water", "Temperature"]:
+    if folder in ["Temperature"]:
         continue
+    
+    ################# Slope #################
+    if folder == "Elevation":
+        print(f"    Processing {folder}...")
+
+        # Get files
+        slope_file = glob.glob(os.path.join(
+            RESULTS_DIR, "Slope", "*.tif"))[0]
+        
+        # Open file and apply limit
+        with rasterio.open(slope_file) as src:
+            slope_data = src.read(1)
+            slope_meta = src.meta.copy()
+
+            # Apply limit
+            slope_limit = fuzzy_membership(slope_data, fuzzy_functions[0], limits)
+            slope_limit[slope_data == NO_DATA_VALUE] = NO_DATA_VALUE
+            
+            # Save output
+            output_path = os.path.join(
+                new_results_subdir,
+                f"Slope_suitability_score.tif"
+            )
+
+            out_profile = slope_meta.copy()
+            out_profile.update({'dtype': 'float32',
+                                'nodata': -9999})
+
+            with rasterio.open(output_path, 'w', **out_profile) as dst:
+                dst.write(slope_limit, 1)
 
     ############## Process NDVI ##############
-    if folder == "NDVI":
+    elif folder == "NDVI":
         print(f"    Processing {folder}...")
         # Get NDVI files
         ndvi_files = glob.glob(os.path.join(
@@ -172,7 +202,7 @@ for folder in PARAMS['LS_Results_Folder'].unique():
 
         # Apply fuzzy logic
         ndvi_limit = fuzzy_membership(max_ndvi, fuzzy_functions[0], limits)
-        ndvi_limit = ndvi_limit.astype(np.float32)
+        ndvi_limit[ndvi_data == NO_DATA_VALUE] = NO_DATA_VALUE
 
         # Save output
         output_path = os.path.join(
@@ -182,7 +212,7 @@ for folder in PARAMS['LS_Results_Folder'].unique():
 
         out_profile = ndvi_meta.copy()
         out_profile.update({'dtype': 'float32',
-                            'nodata': 0})
+                            'nodata': -9999})
 
         with rasterio.open(output_path, 'w', **out_profile) as dst:
             dst.write(ndvi_limit, 1)
@@ -201,12 +231,11 @@ for folder in PARAMS['LS_Results_Folder'].unique():
             abrev = abrevs[i]
             limit = limits[i]
             unit = units[i]
-            parameter = parameters[i]
             fuzzy_function = fuzzy_functions[i]
 
             # Find matching file
             matching_files = [
-                f for f in snc_files if parameter.lower() in os.path.basename(f).lower()]
+                f for f in snc_files if param.lower() in os.path.basename(f).lower()]
             if not matching_files:
                 print(f"  No data found for {param}")
                 continue
@@ -218,82 +247,85 @@ for folder in PARAMS['LS_Results_Folder'].unique():
 
                 # Apply limit
                 snc_limit = fuzzy_membership(snc_data, fuzzy_function, limit)
-                snc_limit = snc_limit.astype(np.float32)
+                snc_limit[snc_data == NO_DATA_VALUE] = NO_DATA_VALUE
                 
                 # Save output
                 output_path = os.path.join(
                     new_results_subdir,
-                    f"Extractable_{abrev.upper()}_Soil_suitability_score.tif"
+                    f"{abrev.upper()}_suitability_score.tif"
                 )
 
                 out_profile = snc_meta.copy()
-                out_profile.update({'dtype': 'uint8',
-                                'nodata': 0})
+                out_profile.update({'dtype': 'float32',
+                                    'nodata': -9999})
 
                 with rasterio.open(output_path, 'w', **out_profile) as dst:
                     dst.write(snc_limit, 1)
 
     # ############## Process soil hydraulic properties ##############
-    # if folder == "Soil_Hydraulic_Properties":
-    #     print(f"Processing {folder}...")
-    #     # Load HHS data files that match parameters
-    #     hhs_files = []
-    #     for param in parameters:
-    #         hhs_files.extend(glob.glob(os.path.join(
-    #             HHS_DATA_DIR, "*.tif")))
+    if folder == "Soil_Hydraulic_Properties":
+        print(f"Processing {folder}...")
+        # Load HHS data files that match parameters
+        hhs_files = []
+        hhs_files.extend(glob.glob(os.path.join(
+                HHS_DATA_DIR, "*.tif")))
+        
+        limits = [limits[:4], limits[4:]]
+        # Load and process each HHS parameter
+        for i, param in enumerate(parameters):
+            print(f"  Processing {param}...")
 
-    #     # Load and process each HHS parameter
-    #     for param in parameters:
-    #         print(f"  Processing {param}...")
+            # Get limit, unit and fuzzy function for this parameter
+            limit = limits[i]
+            fuzzy_function = fuzzy_functions[i]
 
-    #         # Set multiplier based on parameter
-    #         MULTIPLIER = 10 if param == "Ksat" else 1000  # mm/d for Ksat, mm/m for WCavail
+            # Find topsoil and subsoil files and read data
+            topsoil_file = None
+            subsoil_file = None
+            for file in hhs_files:
+                if param in file:
+                    # Open topsoil and subsoil files
+                    if "TOPSOIL" in file:
+                        topsoil_file = file
+                        with rasterio.open(topsoil_file) as src:
+                            topsoil_data = src.read(1)
+                            topsoil_profile = src.profile.copy()
+                    elif "SUBSOIL" in file:
+                        subsoil_file = file
+                        with rasterio.open(subsoil_file) as src:
+                            subsoil_data = src.read(1)
 
-    #         # Get limit and unit for this parameter
-    #         idx = parameters.index(param)
-    #         limit = limits[idx]
-    #         unit = units[idx]
+            if not topsoil_file or not subsoil_file:
+                print(f"  Missing soil data for {param}")
+                continue
 
-    #         # Find topsoil and subsoil files and read data
-    #         topsoil_file = None
-    #         subsoil_file = None
-    #         for file in hhs_files:
-    #             if param in file:
-    #                 # Open topsoil and subsoil files
-    #                 if "TOPSOIL" in file:
-    #                     topsoil_file = file
-    #                     with rasterio.open(topsoil_file) as src:
-    #                         topsoil_data = src.read(1)
-    #                         topsoil_profile = src.profile.copy()
-    #                 elif "SUBSOIL" in file:
-    #                     subsoil_file = file
-    #                     with rasterio.open(subsoil_file) as src:
-    #                         subsoil_data = src.read(1)
+            # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
+            weighted_topsoil = topsoil_data * 0.3
+            weighted_subsoil = subsoil_data * 1.7
+            weighted_avg = (weighted_topsoil +
+                            weighted_subsoil) / 2
 
-    #         if not topsoil_file or not subsoil_file:
-    #             print(f"  Missing soil data for {param}")
-    #             continue
+            # Apply limit
+            limit_value = limit
 
-    #         # Calculate weighted average (0.3 * topsoil + 1.7 * subsoil)/2
-    #         weighted_topsoil = topsoil_data * 0.3
-    #         weighted_subsoil = subsoil_data * 1.7
-    #         weighted_avg = (weighted_topsoil +
-    #                         weighted_subsoil) / 2 * MULTIPLIER
+            shp_limit = fuzzy_membership(weighted_avg, fuzzy_function, limit_value)
+            shp_limit[subsoil_data == NO_DATA_VALUE] = NO_DATA_VALUE
 
-    #         # Apply limit
-    #         limit_value = float(limit)
-    #         limit_raster = (weighted_avg > limit_value).astype(np.uint8)
+            # Save output
+            output_path = os.path.join(
+                new_results_subdir, f"{param}_suitability_score_{PROVINCE_NAME}.tif")
+            out_profile = topsoil_profile.copy()
+            out_profile.update({
+                'dtype': 'float32',
+                'count': 1,
+                'nodata': -9999.0
+            })
 
-    #         # Save output
-    #         output_path = os.path.join(
-    #             new_results_subdir, f"{param}_Soil_higher_{limit}{unit}_{PROVINCE_NAME}.tif")
-    #         out_profile = topsoil_profile.copy()
-    #         out_profile.update({
-    #             'dtype': 'uint8',
-    #             'count': 1
-    #         })
-
-    #         with rasterio.open(output_path, 'w', **out_profile) as dst:
-    #             dst.write(limit_raster, 1)
+            with rasterio.open(output_path, 'w', **out_profile) as dst:
+                dst.write(shp_limit, 1)
+            
+            output_path_weighted_avg = os.path.join(HHS_DATA_DIR, f"weighted_avg_{param}.tif")
+            with rasterio.open(output_path_weighted_avg, 'w', **out_profile) as dst:
+                dst.write(weighted_avg, 1)
 
 print("Parameter limits calculation complete!")

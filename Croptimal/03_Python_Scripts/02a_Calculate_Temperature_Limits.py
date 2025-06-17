@@ -15,6 +15,75 @@ This script calculates temperature limits for different crops by:
     b. For tmax, the 75 and 95 percentile are used.
 3) Creating temperature suitability maps based on weighted averages
 """
+
+####################################################################################################
+# Functions
+def fuzzy_membership(raster, function_type, parameters):
+    result = raster.copy().astype(float)
+
+    if function_type == "Increasing":
+        # Two parameters: [a, b]
+        # below a = 0, between a-b = 0 to 1, above b = 1
+        a = parameters[0]
+        b = parameters[1]
+        
+        result[raster <= a] = 0
+        result[raster >= b] = 1
+        mask = (a < raster) & (raster < b)
+        result[mask] = (raster[mask] - a) / (b-a)
+        
+    elif function_type == "Decreasing":
+        # Two parameters: [a, b]
+        # below a = 1, between a-b = 1 to 0, above b = 0
+        a = parameters[0]
+        b = parameters[1]
+        
+        result[raster <= a] = 1
+        result[raster >= b] = 0
+        mask = (a < raster) & (raster < b)
+        result[mask] = 1 - (raster[mask] - a) / (b - a)
+    
+    elif function_type == "Triangular":
+        # Three parameters: [a, b, c]
+        # below a = 0, a-b = 0 to 1, b-c = 1 to 0, above c = 0
+        a = parameters[0]
+        b = parameters[1]  # peak point
+        c = parameters[2]
+
+        result[raster <= a] = 0
+        result[raster >= c] = 0
+
+        mask1 = (a < raster) & (raster < b)
+        mask2 = (b < raster) & (raster < c)
+        result[mask1] = (raster[mask1] - a) / (b - a)
+        result[mask2] = 1 - (raster[mask2] - b) / (c - b)
+    
+    elif function_type == "Trapezoidal":
+        # Four parameters: [a, b, c, d]
+        # below a = 0, a-b = 0 to 1, b-c = 1, c-d = 1 to 0, above d = 0
+        a = parameters[0]
+        b = parameters[1]  # start of plateau
+        c = parameters[2]  # end of plateau
+        d = parameters[3]
+
+        result[raster <= a] = 0
+        result[raster >= d] = 0
+
+        mask1 = (a < raster) & (raster < b)
+        mask2 = (b < raster) & (raster < c)
+        mask3 = (c < raster) & (raster <d)
+        result[mask1] = (raster[mask1] - a) / (b - a)
+        result[mask2] = 1
+        result[mask3] = 1 - (raster[mask3] -c) / (d - c)
+    
+    if np.all(result == raster):
+        raise ValueError("Result raster is the same as input raster. Fuzzy logic not applied")
+    
+    return result
+
+def plot_raster(raster):
+    plt.imshow(np.ma.masked_where(raster == NO_DATA_VALUE, raster), cmap='viridis')
+    plt.colorbar()
 ####################################################################################################
 ###################### Define directories, constants and file paths ################################
 ####################################################################################################
@@ -87,6 +156,8 @@ for p_idx, per in enumerate(VARIABLES):
 
         # Get temperature thresholds
         t_base = crop_data["T_Base"]
+        t_optimal_start = crop_data["T_Optimal_Start"]
+        t_optimal_end = crop_data["T_Optimal_End"]
         t_upper = crop_data["T_Upper"]
 
         # Get month abbreviations for filtering files
@@ -156,36 +227,32 @@ for p_idx, per in enumerate(VARIABLES):
 
         # Create temperature suitability maps
         if tmin_w_data is not None and tmax_w_data is not None:
-            # Check if tmin is higher than base temperature
-            tmin_w_higher_tbase = (tmin_w_data > t_base).astype(np.uint8)
-
-            # Check if tmax is lower than upper temperature
-            tmax_w_lower_tupper = (tmax_w_data < t_upper).astype(np.uint8)
-
-            # Combined suitability (both conditions must be met)
-            two_limits_w = (tmin_w_higher_tbase) & (
-                tmax_w_lower_tupper) & tmax_valid & tmin_valid
-            two_limits_w.astype(np.uint8)
+            # Apply fuzzy logic
+            temperature_lower_limit = fuzzy_membership(tmin_w_data, 'Increasing', [t_base, t_optimal_start])
+            temperature_upper_limit = fuzzy_membership(tmax_w_data, 'Decreasing', [t_optimal_end, t_upper])
+            temperature_limit = (temperature_lower_limit + temperature_upper_limit) * 0.5
+            temperature_limit = temperature_limit.astype(np.float32)
+            temperature_limit[~tmax_valid] = NO_DATA_VALUE
 
             # Save output
             season_label = f"{month_abbrs[0]}-{month_abbrs[-1]}"
             folder_name = f"Tmax_{per}"
             output_path = os.path.join(
                 NEW_RESULTS_SUBDIR, folder_name,
-                f"Temp_between_{t_base}_and_{t_upper}°C_{crop_name}_{season_label}.tif")
+                f"Temperature_suitability_{crop_name}_{season_label}.tif")
             os.makedirs(os.path.join(NEW_RESULTS_SUBDIR,
                         folder_name), exist_ok=True)
 
             # Update metadata for output raster. Set all nodata values to 0.
             meta.update({
-                'dtype': 'uint8',
+                'dtype': 'float32',
                 'count': 1,
-                'nodata': 0
+                'nodata': -9999
             })
 
             # Write output raster
             with rasterio.open(output_path, 'w', **meta) as dst:
-                dst.write(two_limits_w, 1)
+                dst.write(temperature_limit, 1)
 
             print(
                 f"  Created temperature suitability map for {crop_name}, {season_label}, {per}")

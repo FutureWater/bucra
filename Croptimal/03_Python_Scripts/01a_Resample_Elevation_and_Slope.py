@@ -33,7 +33,7 @@ TEMP_DIR = os.path.join(parent_wd, "05_Temp")
 # Create output directory for DEM
 DEM_PATH = os.path.join(DATA_DIR, "DEM", "DEM_NileDelta_250m.tif")
 NEW_DEM_DIR = os.path.join(RESULTS_DIR, "DEM")
-SLOPE_DIR = os.path.join(RESULTS_DIR, "_LS_RESULTS", "Slope")
+SLOPE_DIR = os.path.join(RESULTS_DIR, "Slope")
 os.makedirs(SLOPE_DIR, exist_ok=True)
 os.makedirs(NEW_DEM_DIR, exist_ok=True)
 
@@ -170,45 +170,44 @@ with rasterio.open(bilinear_path, "w", **masked_profile) as dst:
 print(f"Calculate slope DEM: {PROVINCE_NAME}")
 
 
-# Calculate slope using 3x3 windows (equivalent to terrain with neighbors=8)
-def calculate_slope(dem, cell_size=RES):
-    # Calculate gradients
-    dx = sobel(dem, axis=1) / (8 * cell_size)
-    dy = sobel(dem, axis=0) / (8 * cell_size)
-
-    # Calculate slope in radians and convert to percent
+def calculate_slope_sobel_masked(dem, cell_size=RES, no_data_value=-9999):
+    """
+    Calculate slope using Sobel filters with proper no-data handling.
+    """
+    # Create mask and processed DEM
+    valid_mask = dem != no_data_value
+    dem_processed = dem.astype(np.float64)
+    
+    # Fill no-data areas with nearest valid values to avoid edge artifacts
+    from scipy.ndimage import distance_transform_edt
+    
+    # Find nearest valid pixels for no-data areas
+    invalid_mask = ~valid_mask
+    if np.any(invalid_mask):
+        indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
+        dem_processed[invalid_mask] = dem_processed[tuple(indices[:, invalid_mask])]
+    
+    # Now apply Sobel
+    dx = sobel(dem_processed, axis=1) / (8 * cell_size)
+    dy = sobel(dem_processed, axis=0) / (8 * cell_size)
+    
+    # Calculate slope
     slope_radians = np.arctan(np.sqrt(dx**2 + dy**2))
     slope_percent = np.tan(slope_radians) * 100
-
+    
+    # Restore original no-data mask
+    slope_percent[~valid_mask] = no_data_value
+    
     return slope_percent
 
 
 # Calculate slope
-slope = calculate_slope(masked_data[0])
+slope = calculate_slope_sobel_masked(masked_data[0])
 
 # Save slope raster
 slope_path = os.path.join(SLOPE_DIR, f"Slope_{PROVINCE_NAME}.tif")
 with rasterio.open(slope_path, "w", **out_profile) as dst:
     dst.write(slope.astype(rasterio.float32), 1)
-
-# Step 8: Calculate areas with slope less than threshold
-# Get slope threshold from params (you'll need to define this)
-slope_threshold = float(
-    PARAMETERS.loc[PARAMETERS['Parameter'] == 'Slope', 'Limit'].values[0])
-slope_lower_limit = (slope < slope_threshold) & (masked_data[0] != NO_DATA_VALUE)
-slope_lower_limit = slope_lower_limit.astype(np.uint8)  # Convert to uint8
-
-
-# Save threshold raster
-print(f"Write rasters slope and slope limit: {PROVINCE_NAME}")
-lower_slope_path = os.path.join(
-    SLOPE_DIR, f"Slope_lower_{slope_threshold}perc_{PROVINCE_NAME}.tif")
-out_profile.update({
-    'dtype': 'uint8',
-    'nodata': 0,})
-
-with rasterio.open(lower_slope_path, "w", **out_profile) as dst:
-    dst.write(slope_lower_limit, 1)
 
 # Remove temporary files
 os.remove(cropped_dem_path)

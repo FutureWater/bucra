@@ -9,6 +9,14 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/SOSIA/sosia_202502.py"
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${fileDirname}"
         }
     ]
 }

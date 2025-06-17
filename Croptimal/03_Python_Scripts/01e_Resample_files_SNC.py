@@ -4,14 +4,13 @@ import rasterio
 import numpy as np
 from rasterio.warp import reproject, Resampling, calculate_default_transform
 from rasterio.mask import mask
-from rasterio.windows import Window
-from rasterio.transform import array_bounds
 import geopandas as gpd
+from rasterio.merge import merge
 import matplotlib.pyplot as plt
 
 """
-This script processes Soil Hydraulic Propertie data by:
-1. Reading soil hydraulic properites ontent TIF files
+This script processes Soil Nutrient Content (SNC) data by:
+1. Reading soil nutrient content TIF files
 2. Cropping to a buffered province boundary
 3. Resampling to match a reference DEM
 4. Saving the processed data
@@ -24,11 +23,12 @@ This script processes Soil Hydraulic Propertie data by:
 current_wd = os.getcwd()
 parent_wd = os.path.dirname(current_wd)
 base_wd = os.path.dirname(os.path.dirname(parent_wd))
+angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
 
 # Gets province from subprocess in 000_Run_All.py
 PROVINCE_NAME = os.environ.get("PROVINCE")
 if not os.environ.get("PROVINCE"):
-    PROVINCE_NAME = "Sharkia"                         # dummy variable for testing.
+    PROVINCE_NAME = "Sharkia"                       # dummy variable for testing.
 
 # Define other folders
 DATA_DIR = os.path.join(parent_wd, "01_Data")
@@ -36,26 +36,32 @@ GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
 RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 TEMP_DIR = os.path.join(parent_wd, "05_Temp")
+PROVINCES_FILEPATH = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm1.shp")
 
 # Define constants
 RES = 250  # Set resolution in meters
 LOCAL_PROJ = "EPSG:32636"
 NO_DATA_VALUE = -9999.0
-VAR_NAMES = ['WCavail', 'Ksat']
 
-# Create output directory for processed SHP data
-SHP_RESULTS_DIR = os.path.join(RESULTS_DIR, "Soil_Hydraulic_Properties")
-os.makedirs(SHP_RESULTS_DIR, exist_ok=True)
+# Create output directory for processed SNC data
+SNC_RESULTS_DIR = os.path.join(RESULTS_DIR, "Soil_Nutrient_Content")
+os.makedirs(SNC_RESULTS_DIR, exist_ok=True)
 
-# Get input SHP files
-# INPUT_FILES = [file for var in VAR_NAMES for file in glob.glob(os.path.join(
-#     '/Users/thomasfuturewater/FutureWater Dropbox/Team/Data/Global/Soil/HiHydroSoil_250m/Top_Subsoil', var, '*.tif'))]
-# if not INPUT_FILES:
-#     raise FileNotFoundError(
-#         f"No SHP files found in 'FutureWater Dropbox/Team/Data/Global/Soil/HiHydroSoil_250m'")
-
+# Get input SNC files
 INPUT_FILES = glob.glob(os.path.join(
     DATA_DIR, "Soil_Nutrient_Content", "*.tif"))
+
+if not INPUT_FILES:
+    raise FileNotFoundError(
+        f"No SNC files found in {os.path.join(DATA_DIR, 'Soil_Nutrient_Content')}")
+
+print(f"Found {len(INPUT_FILES)} SNC files")
+
+# Get file names without extension and replace "af" with province_name
+VAR_NAMES = [os.path.basename(file) for file in INPUT_FILES]
+VAR_NAMES_2 = [name.replace(
+    "0to20cm", f"{PROVINCE_NAME}") for name in VAR_NAMES]
+
 ####################################################################################################
 ####################### Loading DEM and province shapefile #########################################
 ####################################################################################################
@@ -76,19 +82,18 @@ provinces_shp = gpd.read_file(provinces_filepath)
 province_shp_sel = provinces_shp[provinces_shp["ADM1_EN"] == PROVINCE_NAME]
 province_shp_reproj = province_shp_sel.to_crs(DEM_CRS)
 
-
 ####################################################################################################
 ################################# Process SNC files ################################################
 ####################################################################################################
 # Process each SNC file
-for i, (input_file, var) in enumerate(zip(INPUT_FILES, VAR_NAMES)):
+for i, (input_file, output_name) in enumerate(zip(INPUT_FILES, VAR_NAMES_2)):
     print(
         f"  Processing {os.path.basename(input_file)} ({i+1}/{len(INPUT_FILES)})")
 
     # Read input file
     with rasterio.open(input_file) as src:
         # Calculate window/subset that covers the mask extent
-        province_shp_window_crs = province_shp_sel.to_crs(src.crs).buffer(10000)
+        province_shp_window_crs = province_shp_sel.to_crs(src.crs)
         window = src.window(*province_shp_window_crs.total_bounds)
         temp_profile = src.profile
 
@@ -108,13 +113,10 @@ for i, (input_file, var) in enumerate(zip(INPUT_FILES, VAR_NAMES)):
             src_crs=src.crs,
             dst_transform=DEM_TRANSFORM,
             dst_crs=DEM_CRS,
-            resampling=Resampling.nearest,
+            resampling=Resampling.bilinear,
             src_nodata=src.nodata,
             dst_nodata=NO_DATA_VALUE
         )
-        temp_output = os.path.join(TEMP_DIR, f"temp_{var}_reprojected_nearest.tif")
-        with rasterio.open(temp_output, 'w', **DEM_PROFILE) as temp_dst:
-            temp_dst.write(destination_array, 1)
 
         # Create a memory file with the reprojected data for masking
         with rasterio.MemoryFile() as memfile:
@@ -138,10 +140,8 @@ for i, (input_file, var) in enumerate(zip(INPUT_FILES, VAR_NAMES)):
                 })
 
         # Write the final masked result to file
-        top_sub = os.path.basename(input_file)[-11:-4]
-        output_name = var + '_' + top_sub + '_' + PROVINCE_NAME + ".tif"
-        OUTPUT_PATH = os.path.join(SHP_RESULTS_DIR, output_name)
+        OUTPUT_PATH = os.path.join(SNC_RESULTS_DIR, 'Extractable_' + output_name)
         with rasterio.open(OUTPUT_PATH, 'w', **masked_profile) as dst:
             dst.write(masked_data.astype(rasterio.float32))
 
-print("SHP resampling complete!")
+print("SNC resampling complete!")

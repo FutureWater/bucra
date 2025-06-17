@@ -109,7 +109,7 @@ def main():
         ##############################################################################################
         # Create list of all scripts with relative file paths
         list_scripts = [script for script in glob.glob(os.path.join(
-            SCRIPTS_DIR, "*.py")) if not ("000_Run_All.py" or '05_Seasonal')in script]
+            SCRIPTS_DIR, "*.py")) if not ("000_Run_All.py" or '04_Seasonal')in script]
         # Sort the list of scripts from in correct order
         list_scripts.sort()
         # print(list_scripts)

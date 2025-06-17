@@ -51,7 +51,7 @@ T_PERC_NAMES = ["Warmer", "Much Warmer"]  # Names for temperature scenarios
 
 # Create a mock cropping calendar (replace with actual data loading)
 CROPPING_CAL = pd.read_csv(os.path.join(current_wd, "Cropping_calendar.csv"), sep = ",")
-PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
+PARAMS = pd.read_csv(os.path.join(current_wd, "Parameters_fuzzy.csv"))
 
 ####################################################################################################
 ############################## Produce Suitability maps ############################################
@@ -65,8 +65,8 @@ input_file_ndvi = glob.glob(os.path.join(RESULTS_DIR,
                                           "_LS_Results", "NDVI", "*.tif"))
 input_files_temperature = glob.glob(os.path.join(RESULTS_DIR,
                                                  "_LS_Results", "Temperature", "**", "*.tif"), recursive=True)
-# input_files_hhs = glob.glob(os.path.join(RESULTS_DIR,
-#                                          "_LS_Results", "Soil_Hydraulic_Properties", "*.tif"))
+input_files_hhs = glob.glob(os.path.join(RESULTS_DIR,
+                                        "_LS_Results", "Soil_Hydraulic_Properties", "*.tif"))
 input_files_snc = glob.glob(os.path.join(RESULTS_DIR,
                                          "_LS_Results", "Soil_Nutrient_Content", "*.tif"))
 input_files_slope = glob.glob(os.path.join(RESULTS_DIR,
@@ -113,13 +113,13 @@ for _, crop_row in CROPPING_CAL.iterrows():
             continue
 
         # Find soil and slope files
-        # ksat_file = find_file(input_files_hhs, "Ksat")
-        # wcavail_file = find_file(input_files_hhs, "WCavail")
+        ksat_file = find_file(input_files_hhs, "Ksat")
+        wcavail_file = find_file(input_files_hhs, "WCavail")
         potassium_file = find_file(input_files_snc, "_K_")
         phosphorus_file = find_file(input_files_snc, "_P_")
         slope_file = find_file(input_files_slope, "lower")
 
-        if not all([potassium_file, phosphorus_file, slope_file]):  # ksat_file, wcavail_file,
+        if not all([potassium_file, phosphorus_file, slope_file, ksat_file, wcavail_file,]):
             print(f"    One or more soil/slope files not found")
             continue
 
@@ -141,17 +141,18 @@ for _, crop_row in CROPPING_CAL.iterrows():
 
         # Read and apply weights to each layer
         with rasterio.open(input_file_ndvi[0]) as src:
+            no_data_mask = src.read(1) == NO_DATA_VALUE
             ndvi_data = src.read(1) * ndvi_weight
             output_meta = src.meta.copy()
 
         with rasterio.open(temp_files[0]) as src:
             temp_data = src.read(1) * temp_weight
 
-        # with rasterio.open(ksat_file) as src:
-        #     ksat_data = src.read(1) * ksat_weight
+        with rasterio.open(ksat_file) as src:
+            ksat_data = src.read(1) * ksat_weight
 
-        # with rasterio.open(wcavail_file) as src:
-        #     wcavail_data = src.read(1) * wcavail_weight
+        with rasterio.open(wcavail_file) as src:
+            wcavail_data = src.read(1) * wcavail_weight
 
         with rasterio.open(potassium_file) as src:
             potassium_data = src.read(1) * potassium_weight
@@ -164,8 +165,9 @@ for _, crop_row in CROPPING_CAL.iterrows():
 
         # Sum all weighted layers
         ls_data = (ndvi_data + temp_data +
-                    potassium_data + phosphorus_data + slope_data)
-        # ksat_data + wcavail_data +
+                    potassium_data + phosphorus_data + slope_data + ksat_data + wcavail_data)
+        
+        ls_data[no_data_mask] = NO_DATA_VALUE
 
         # Save the result
         output_path = os.path.join(new_dir, file_name)
