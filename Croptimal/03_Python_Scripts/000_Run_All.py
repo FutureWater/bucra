@@ -1,194 +1,173 @@
-# Import necessary libraries
+#!/usr/bin/env python3
+"""
+Main Orchestration Script
+Runs all Croptimal processing scripts for specified provinces in the correct order.
+Manages environment variables and handles script execution with proper error handling.
+"""
+
 import os
 import glob
 import datetime
 import sys
-import calendar
 import subprocess
 from pathlib import Path
-
-import pandas as pd
-import numpy as np
 import geopandas as gpd
-import rasterio
 from rasterio.env import Env
-import matplotlib.pyplot as plt
+
+# Import the configuration class
+from config import CroptimalConfig
 
 
-##############################################################################################
-################################### START OF DATA INPUT ######################################
-##############################################################################################
-# Define current and parent working directories
-CURRENT_WD = os.getcwd()
-PARENT_WD = os.path.dirname(CURRENT_WD)
-BASE_WD = os.path.dirname(os.path.dirname(PARENT_WD))
-angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
-
-# Define main folders
-DATA_DIR = os.path.join(PARENT_WD, "01_Data")
-GIS_DIR = os.path.join(BASE_WD, "GIS")     # Directory with shapefiles
-RESULTS_DIR = os.path.join(PARENT_WD, "04_Results")
-os.makedirs(RESULTS_DIR, exist_ok=True)
-TEMP_DIR = os.path.join(PARENT_WD, "05_Temp")
-SCRIPTS_DIR = os.path.join(PARENT_WD, "03_Python_Scripts")
-
-
-# Input data paths
-PROVINCES = os.path.join(GIS_DIR, "Nile_delta_bnd_adm1.shp")
-# COMMUNES = os.path.join(GIS_DIR, "Shapefiles", "AGO_adm3.shp")
-DEM = os.path.join(DATA_DIR, "DEM\DEM_NileDelta_250m.tif")
-HHS_DATA_DIR = os.path.join(DATA_DIR, "__TO_DROPBOX__", "Top_Subsoil")
-CROPPING_CALENDER = os.path.join(SCRIPTS_DIR, "Cropping_calendar.csv")
-CC_A = os.path.join(SCRIPTS_DIR, "Cropping_calendar_A.csv")
-CC_B = os.path.join(SCRIPTS_DIR, "Cropping_calendar_B.csv")
-PARAMETERS = os.path.join(SCRIPTS_DIR, "Parameters.csv")
-SEASONAL_FORECAST_DIR = os.path.join(PARENT_WD, "Seasonalforecast")
-
-# Output directories
-NEW_RESULTS_SUBDIR = os.path.join(RESULTS_DIR, "_LS_Results", "_Communes")
-NEW_DROP = os.path.join(PARENT_WD, "Dropbox (FutureWater)",
-                        "FW_VH_RK", "04_Results", "_LS_Results", "_Communes")
-
-##############################################################################################
-################################### Parameter setup ##########################################
-##############################################################################################
-# # If new crops are added, set this switch to 1 (all base data is already present like T, P, etc.)
-# Make sure to choose the right cropping_calender file or add lines to the existing one.
-SWITCH = 2  # 0: all, 1: new crops only, 2: seasonal forecast only
-
-# Resolution and projection of final rasters
-RES = 250  # meter
-LOCAL_PROJ = "EPSG:32636"
-
-# Temperature input
-T_LAPSE_RATE = -0.0065
-T_PERC = [0.75, 0.95]
-T_vars = ["Tmean", "Tmin", "Tmax"]
-T_perc_names = ["Warmer", "Much_Warmer"]
-
-# Rainfall input
-P_perc = [0.25, 0.05]
-P_perc_names = ["Drier", "Much_Drier"]
-
-# Read provinces shapefile
-province_shp = gpd.read_file(PROVINCES)
-province_names = province_shp["ADM1_EN"].tolist()
+def get_processing_scripts(scripts_dir):
+    """Get list of processing scripts in correct execution order."""
+    # Find all Python scripts except this orchestration script
+    script_files = glob.glob(str(scripts_dir / "*.py"))
+    
+    # Exclude orchestration and seasonal forecast scripts
+    excluded_patterns = ["000_Run_All.py", "04_Seasonal"]
+    processing_scripts = [
+        script for script in script_files 
+        if not any(pattern in script for pattern in excluded_patterns)
+    ]
+    
+    # Sort to ensure correct execution order
+    processing_scripts.sort()
+    
+    if not processing_scripts:
+        raise FileNotFoundError("No processing scripts found")
+    
+    return processing_scripts
 
 
+def clean_temp_directory(temp_dir):
+    """Clean temporary files from the temp directory."""
+    temp_files = glob.glob(str(temp_dir / "*"))
+    
+    for temp_file in temp_files:
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass  # File might be in use or already deleted
 
-##############################################################################################
-###################### SETUP RASTER OPTIONS AND SWITCH VALUES ################################
-##############################################################################################
-# Set up raster options to prevent excessive memory or hard disk use.
+
+def run_script_for_province(script_path, province_name, config):
+    """Run a single processing script for a specific province."""
+    script_name = Path(script_path).stem
+    print(f"Run {script_name} for {province_name}.")
+    
+    # Set up environment variables for the subprocess
+    script_env = os.environ.copy()
+    script_env["PROVINCE"] = province_name
+    script_env["RESOLUTION"] = str(config.resolution_meters)
+    script_env["LOCAL_PROJ"] = config.local_projection
+    script_env["DATA_DIR"] = str(config.data_dir)
+    script_env["RESULTS_DIR"] = str(config.results_dir)
+    script_env["TEMP_DIR"] = str(config.temp_dir)
+    script_env["CROPPING_CALENDER"] = str(config.cropping_calendar)
+    
+    try:
+        # Run script with real-time output
+        process = subprocess.Popen(
+            ["python", script_path],
+            env=script_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Print output in real-time
+        for stdout_line in iter(process.stdout.readline, ""):
+            print(stdout_line, end="")
+            sys.stdout.flush()
+        
+        process.stdout.close()
+        return_code = process.wait()
+        
+        if return_code:
+            raise subprocess.CalledProcessError(return_code, process.args)
+            
+    except subprocess.CalledProcessError as e:
+        print(f"Error running script {script_name} for province {province_name}")
+        if hasattr(e, 'stderr') and e.stderr:
+            print(f"Error details: {e.stderr}")
+        raise
+
+
+def load_province_names(config):
+    """Load list of province names from shapefile."""
+    provinces_gdf = gpd.read_file(config.provinces_shapefile)
+    province_names = provinces_gdf["ADM1_EN"].tolist()
+    
+    if not province_names:
+        raise ValueError("No provinces found in shapefile")
+    
+    return province_names
+
+
 def main():
+    """Main orchestration function."""
+    print("Starting Croptimal processing pipeline...")
+    start_time = datetime.datetime.now()
+    
+    # Initialize configuration
+    config = CroptimalConfig()
+    
+    # Set up raster processing environment
     with Env(
         GDAL_CONFIG_OPTIONS={
-            'GDAL_MAX_MEM_ALLOC': '1e+10',  # Set maximum memory allocation
-            'GDAL_CACHEMAX': '0.1e+10'      # Set chunk size
+            'GDAL_MAX_MEM_ALLOC': '1e+10',
+            'GDAL_CACHEMAX': '0.1e+10'
         },
-        TEMP_DIR=TEMP_DIR
+        TEMP_DIR=str(config.temp_dir)
     ):
-        start_time = datetime.datetime.now()
-
-        # Hardcoded switch value
-        switch = 0
-        n = 15 if switch == 2 else (10 if switch == 1 else 1)
-
-        # Example: Running seasonal forecast (Script 8) if switch is 2
-        # Import helper function for switch == 15
-        if n == 15:
-            # Implement your Seasonal Forecast function here
-            print(
-                "Need to convert and import: 01_Download_Seasonal_forecast_WI_API.R to Python")
-            # In Python this would be something like:
-            # from helper_functions.download_seasonal_forecast import download_seasonal_forecast
-            pass
-
-        ##############################################################################################
-        ###################### RUN THROUGH ALL SCRIPTS FOR ALL PROVINCES #############################
-        ##############################################################################################
-        # Create list of all scripts with relative file paths
-        list_scripts = [script for script in glob.glob(os.path.join(
-            SCRIPTS_DIR, "*.py")) if not ("000_Run_All.py" or '04_Seasonal')in script]
-        # Sort the list of scripts from in correct order
-        list_scripts.sort()
-        # print(list_scripts)
-
-        # Process all scripts
-        for script in list_scripts:
-            script_name = os.path.basename(script)[:-3]
-
-            # Run the script for each province.
-            # When running only one province
-            for name in province_names[-1:]:
-                # Clean temporary files to have a clean folder to work with.
-                temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
-
-                for f in temp_files:
-                    try:
-                        os.remove(f)
-                    except:
-                        pass
-
-                # Get province name as string
-                #name = name.replace(" ", "_")
-
-                # Run the script with subprocess. Give all constants as environment variables.
-                print(
-                    f"Run {script_name} for {name}.")
-                myenv = os.environ.copy()
-                myenv["PROVINCE"] = name
-                #myenv["RESOLUTION"] = RES
-                myenv["CWD"] = CURRENT_WD
-                myenv["LOCAL_PROJ"] = LOCAL_PROJ
-                myenv["CROPPING_CALENDER"] = CROPPING_CALENDER
-
-                # Try to run code with subprocess. When script fails, print error message.
+        # Load province names
+        province_names = load_province_names(config)
+        print(f"Found {len(province_names)} provinces: {', '.join(province_names)}")
+        
+        # Get processing scripts
+        processing_scripts = get_processing_scripts(config.scripts_dir)
+        print(f"Found {len(processing_scripts)} processing scripts")
+        
+        # Process each province (currently set to last province only for testing)
+        for province_name in province_names[:]:
+            print(f"\n{'='*60}")
+            print(f"Processing province: {province_name}")
+            print(f"{'='*60}")
+            
+            # Clean temp directory before starting
+            clean_temp_directory(config.temp_dir)
+            
+            # Run each processing script for this province
+            for script_path in processing_scripts:
                 try:
-                    # result = subprocess.run(["python", script],
-                    #                         env=myenv,
-                    #                         check=True,
-                    #                         text=True)
-                    
-                    process = subprocess.Popen(["python", script],
-                             env=myenv,
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE,
-                             universal_newlines=True)
+                    run_script_for_province(script_path, province_name, config)
+                    print("\n")
+                except subprocess.CalledProcessError:
+                    print(f"Failed to process {province_name} with {Path(script_path).name}")
+                    # Continue with next script rather than stopping entirely
+                    continue
+                
+                # Clean temp files after each script
+                clean_temp_directory(config.temp_dir)
+        
+        # Final cleanup
+        clean_temp_directory(config.temp_dir)
     
-                    # Print output in real-time
-                    for stdout_line in iter(process.stdout.readline, ""):
-                        print(stdout_line, end="")
-                        sys.stdout.flush()
-                    
-                    process.stdout.close()
-                    return_code = process.wait()
-                    if return_code:
-                        raise subprocess.CalledProcessError(return_code, process.args)
-                    
-                except subprocess.CalledProcessError as e:
-                    print(
-                        f"Error running script {script} for province {name}")
-                    print(e.stdout)
-                    print(e.stderr)
-
-                # Clean temporary files
-                temp_files = glob.glob(os.path.join(TEMP_DIR, "*.tif"))
-                for f in temp_files:
-                    try:
-                        os.remove(f)
-                    except:
-                        pass
-
-    # End of for loop. All scripts for all provinces have been run.
+    # Calculate and display total processing time
     end_time = datetime.datetime.now()
-    print(f"Time elapsed: {end_time - start_time}")
-
-    print("\n\nAll scripts have been run and all temporary files have been deleted.")
+    elapsed_time = end_time - start_time
+    print(f"\n{'='*60}")
+    print(f"Processing complete!")
+    print(f"Total time elapsed: {elapsed_time}")
+    print(f"All scripts have been run and temporary files cleaned.")
 
 
 if __name__ == "__main__":
-    main()
-##############################################################################################
-#################################### END OF SCRIPT ###########################################
-##############################################################################################
+    try:
+        main()
+    except FileNotFoundError as e:
+        print(f"Error: Missing required file - {e}")
+        exit(1)
+    except Exception as e:
+        print(f"Error in main orchestration: {e}")
+        exit(1)

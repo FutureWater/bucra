@@ -1,197 +1,50 @@
-import os
+#!/usr/bin/env python3
+"""
+DEM and Slope Processing Script
+Processes digital elevation models by cropping, resampling, and calculating slope.
+Optimized for simplicity and efficiency while maintaining readability.
+"""
+
 import numpy as np
-import pandas as pd
 import rasterio
-from rasterio.warp import reproject, Resampling, calculate_default_transform
+from rasterio.warp import reproject, Resampling
 from rasterio.mask import mask
 import geopandas as gpd
-from scipy.ndimage import sobel
-import matplotlib.pyplot as plt
+from scipy.ndimage import sobel, distance_transform_edt
+
+# Import the shared configuration class
+from config import CroptimalConfig
 
 
-##############################################################################################
-################################### START OF DATA INPUT ######################################
-##############################################################################################
-# Define current and parent working directories
-current_wd = os.getcwd()
-parent_wd = os.path.dirname(current_wd)
-base_wd = os.path.dirname(os.path.dirname(parent_wd))
-angola_wd = "/Users/thomasfuturewater/FutureWater Dropbox/Team/Projects/Completed/2019/2019019_G4AW_MavoDiami_Angola/Data/2019019_MavoDiami_LV/2019019_MavoDiami"
-
-# Gets province from subprocess in 000_Run_All.py
-PROVINCE_NAME = os.environ.get("PROVINCE")
-if not os.environ.get("PROVINCE"):
-    PROVINCE_NAME = "Sharkia"                            # dummy variable for testing.
-
-# Define other folders
-DATA_DIR = os.path.join(parent_wd, "01_Data")
-GIS_DIR = os.path.join(base_wd, "GIS")     # Directory with shapefiles
-RESULTS_DIR = os.path.join(parent_wd, "04_Results", PROVINCE_NAME)
-os.makedirs(RESULTS_DIR, exist_ok=True)
-TEMP_DIR = os.path.join(parent_wd, "05_Temp")
-
-# Create output directory for DEM
-DEM_PATH = os.path.join(DATA_DIR, "DEM", "DEM_NileDelta_250m.tif")
-NEW_DEM_DIR = os.path.join(RESULTS_DIR, "DEM")
-SLOPE_DIR = os.path.join(RESULTS_DIR, "Slope")
-os.makedirs(SLOPE_DIR, exist_ok=True)
-os.makedirs(NEW_DEM_DIR, exist_ok=True)
-
-# Temperature variables and parameters
-RES = 250  # Resolution in meters
-NO_DATA_VALUE = -9999.0  # No data value
-LOCAL_PROJ = "EPSG:32636"  # Local projection
-SRC_CRS = "EPSG:4326"  # Projection from NetCDF files: WGS84 projection
-PARAMETERS = pd.read_csv(os.path.join(current_wd, "Parameters.csv"))
-
-##############################################################################################
-######################################### Mask DEM ###########################################
-##############################################################################################
-# Step 1: Crop and mask DEM with province shapefile.
-print(f"Crop DEM: {PROVINCE_NAME}")
-with rasterio.open(DEM_PATH) as src:
-    # Get src data and profile
-    src_nodata = src.nodata
-    profile = src.profile.copy()
-    data = src.read(1)
-    dem_crs = src.crs
-
-    # Load province shapefile and set to crs of DEM
-    provinces_filepath = os.path.join(GIS_DIR, "Nile_delta_bnd_adm1.shp")
-    provinces_shp = gpd.read_file(provinces_filepath)
-    province_shp_sel = provinces_shp[provinces_shp["ADM1_EN"] == PROVINCE_NAME]
-    province_shp_reproj = province_shp_sel.to_crs(LOCAL_PROJ)
-
-    # Crop DEM to shapefile extent.
-    out_image, out_transform = mask(
-        src, province_shp_reproj.geometry, crop=True)
-
-    # Copy metadata. Transform matrix is taken from DEM.
-    out_profile = profile.copy()
-    out_profile.update({
-        "driver": "GTiff",
-        "height": out_image.shape[1],
-        "width": out_image.shape[2],
-        # Transform: (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
-        "transform": out_transform,
-        'nodata': src_nodata,
-        'dtype': 'float32',
-    })
-
-# Save cropped DEM to temporary file
-cropped_dem_path = os.path.join(
-    TEMP_DIR, f"cropped_dem_{PROVINCE_NAME}_temp.tif")
-with rasterio.open(cropped_dem_path, "w", **out_profile) as dest:
-    dest.write(out_image)
-
-
-##############################################################################################
-############################# RESAMPLE ELEVATION AND SLOPE ###################################
-##############################################################################################
-# Step 2: Prepare target raster with desired resolution and projection for resampling.
-print(f"Setting up target raster grid: {PROVINCE_NAME}")
-# Determining bounds
-bounds = province_shp_reproj.total_bounds  # [xmin, ymin, xmax, ymax]
-
-# Calculate dimensions of target raster
-width = int((bounds[2] - bounds[0]) / RES)
-height = int((bounds[3] - bounds[1]) / RES)
-
-# Create transform (local projection) for target raster
-target_transform = rasterio.transform.from_bounds(
-    bounds[0], bounds[1], bounds[2], bounds[3], width, height
-)  # (left, bottom, right, top, width, height)
-
-# Step 3: Reproject using bilinear method
-print(f"Bilinear Resampling Raster DEM: {PROVINCE_NAME}")
-bilinear_dem = np.zeros((height, width), dtype=np.float32)
-
-with rasterio.open(cropped_dem_path) as src:
-    reproject(
-        source=src.read(1),
-        destination=bilinear_dem,
-        src_transform=src.transform,
-        src_crs=src.crs,
-        src_nodata=src.nodata,
-        # Transform matrix from local projection Transform = (pixel size x, row rotation, x-coordinate of upper-left corner, column rotation, pixel size y, y-coordinate of upper-left corner)
-        dst_transform=target_transform,
-        dst_crs=LOCAL_PROJ,
-        dst_nodata=NO_DATA_VALUE,
-        resampling=Resampling.bilinear
-    )
-
-# Metadata for output files
-out_profile = {
-    "driver": "GTiff",
-    "height": height,
-    "width": width,
-    "count": 1,
-    "dtype": bilinear_dem.dtype,
-    "crs": LOCAL_PROJ,
-    "transform": target_transform,
-    "nodata": NO_DATA_VALUE
-}
-
-# Create a memory file with the reprojected data for masking
-with rasterio.MemoryFile() as memfile:
-    with memfile.open(**out_profile) as temp_dst:
-        temp_dst.write(bilinear_dem, 1)
-
-        # Perform the masking operation
-        masked_data, masked_transform = mask(
-            temp_dst,
-            province_shp_reproj.geometry,
-            crop=True,
-            nodata=NO_DATA_VALUE
-        )
-
-        # Update profile for the masked result
-        masked_profile = temp_dst.profile.copy()
-        masked_profile.update({
-            'height': masked_data.shape[1],
-            'width': masked_data.shape[2],
-            'transform': masked_transform,
-        })
-
-# # Step 6: Write results to files
-print(f"Write resampled rasters DEM: {PROVINCE_NAME}")
-
-# Write bilinear resampled DEM
-bilinear_path = os.path.join(NEW_DEM_DIR, f"DEM_{PROVINCE_NAME}_{RES}m.tif")
-with rasterio.open(bilinear_path, "w", **masked_profile) as dst:
-    dst.write(masked_data)
-
-# # Write difference raster
-# diff_path = os.path.join(DEM_DATA_DIR, f"DEM_{PROVINCE_NAME}_{RES}m_diff.tif")
-# with rasterio.open(diff_path, "w", **out_meta) as dst:
-#     dst.write(diff_dem, 1)
-
-# Step 7: Calculate and save slope
-print(f"Calculate slope DEM: {PROVINCE_NAME}")
-
-
-def calculate_slope_sobel_masked(dem, cell_size=RES, no_data_value=-9999):
-    """
-    Calculate slope using Sobel filters with proper no-data handling.
-    """
-    # Create mask and processed DEM
-    valid_mask = dem != no_data_value
-    dem_processed = dem.astype(np.float64)
+def load_province_boundary(config):
+    """Load and reproject province boundary shapefile."""
+    provinces = gpd.read_file(config.provinces_shapefile)
+    target_province = provinces[provinces["ADM1_EN"] == config.province_name]
     
-    # Fill no-data areas with nearest valid values to avoid edge artifacts
-    from scipy.ndimage import distance_transform_edt
+    if target_province.empty:
+        available = provinces["ADM1_EN"].tolist()
+        raise ValueError(f"Province '{config.province_name}' not found. Available: {available}")
     
-    # Find nearest valid pixels for no-data areas
+    return target_province.to_crs(config.local_projection)
+
+
+def calculate_slope_sobel(dem_array, cell_size_meters, no_data_value):
+    """Calculate slope using Sobel edge detection filters."""
+    # Prepare data for processing
+    valid_mask = dem_array != no_data_value
+    dem_processed = dem_array.astype(np.float64)
+    
+    # Fill no-data areas with nearest valid values to prevent edge artifacts
     invalid_mask = ~valid_mask
     if np.any(invalid_mask):
         indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
         dem_processed[invalid_mask] = dem_processed[tuple(indices[:, invalid_mask])]
     
-    # Now apply Sobel
-    dx = sobel(dem_processed, axis=1) / (8 * cell_size)
-    dy = sobel(dem_processed, axis=0) / (8 * cell_size)
+    # Calculate gradients using Sobel filters
+    dx = sobel(dem_processed, axis=1) / (8 * cell_size_meters)
+    dy = sobel(dem_processed, axis=0) / (8 * cell_size_meters)
     
-    # Calculate slope
+    # Convert gradients to slope percentage
     slope_radians = np.arctan(np.sqrt(dx**2 + dy**2))
     slope_percent = np.tan(slope_radians) * 100
     
@@ -201,15 +54,118 @@ def calculate_slope_sobel_masked(dem, cell_size=RES, no_data_value=-9999):
     return slope_percent
 
 
-# Calculate slope
-slope = calculate_slope_sobel_masked(masked_data[0])
+def main():
+    """Main processing function."""
+    print(f"Processing DEM and Slope: {' ' * 20}")
+    
+    # Initialize configuration
+    config = CroptimalConfig()
+    config.validate_inputs()
+    
+    print(f"Province: {config.province_name}")
+    
+    # Load province boundary
+    province_boundary = load_province_boundary(config)
+    
+    # Process DEM data
+    print("Processing DEM data...")
+    
+    with rasterio.open(config.dem_file) as src:
+        # Step 1: Crop DEM to province extent
+        cropped_data, cropped_transform = mask(src, province_boundary.geometry, crop=True)
+        
+        # Step 2: Set up target grid for resampling
+        bounds = province_boundary.total_bounds
+        target_width = int((bounds[2] - bounds[0]) / config.resolution_meters)
+        target_height = int((bounds[3] - bounds[1]) / config.resolution_meters)
+        
+        target_transform = rasterio.transform.from_bounds(
+            bounds[0], bounds[1], bounds[2], bounds[3], 
+            target_width, target_height
+        )
+        
+        # Step 3: Resample to target resolution
+        resampled_dem = np.zeros((target_height, target_width), dtype=np.float32)
+        
+        reproject(
+            source=cropped_data[0],
+            destination=resampled_dem,
+            src_transform=cropped_transform,
+            src_crs=src.crs,
+            src_nodata=src.nodata or config.no_data_value,
+            dst_transform=target_transform,
+            dst_crs=config.local_projection,
+            dst_nodata=config.no_data_value,
+            resampling=Resampling.bilinear
+        )
+        
+        # Step 4: Apply final precise mask
+        profile = {
+            "driver": "GTiff",
+            "height": target_height,
+            "width": target_width,
+            "count": 1,
+            "dtype": resampled_dem.dtype,
+            "crs": config.local_projection,
+            "transform": target_transform,
+            "nodata": config.no_data_value
+        }
+        
+        # Use memory file for final masking
+        with rasterio.MemoryFile() as memfile:
+            with memfile.open(**profile) as temp_dst:
+                temp_dst.write(resampled_dem, 1)
+                
+                final_data, final_transform = mask(
+                    temp_dst,
+                    province_boundary.geometry,
+                    crop=True,
+                    nodata=config.no_data_value
+                )
+        
+        # Update profile for final output
+        final_profile = profile.copy()
+        final_profile.update({
+            "height": final_data.shape[1],
+            "width": final_data.shape[2],
+            "transform": final_transform
+        })
+    
+    # Calculate slope
+    print("Calculating slope...")
+    slope_data = calculate_slope_sobel(
+        final_data[0], 
+        config.resolution_meters, 
+        config.no_data_value
+    )
+    
+    # Save results
+    print("Saving results...")
+    
+    # Generate output paths
+    dem_filename = f"DEM_{config.province_name}_{config.resolution_meters}m.tif"
+    slope_filename = f"Slope_{config.province_name}.tif"
+    
+    dem_path = config.get_output_path('dem', dem_filename)
+    slope_path = config.get_output_path('slope', slope_filename)
+    
+    # Save DEM
+    with rasterio.open(dem_path, "w", **final_profile) as dst:
+        dst.write(final_data[0].astype(rasterio.float32), 1)
+    
+    # Save Slope
+    with rasterio.open(slope_path, "w", **final_profile) as dst:
+        dst.write(slope_data.astype(rasterio.float32), 1)
+    
+    print(f"Processing complete for {config.province_name}\n")
 
-# Save slope raster
-slope_path = os.path.join(SLOPE_DIR, f"Slope_{PROVINCE_NAME}.tif")
-with rasterio.open(slope_path, "w", **out_profile) as dst:
-    dst.write(slope.astype(rasterio.float32), 1)
 
-# Remove temporary files
-os.remove(cropped_dem_path)
-
-print(f"Processing complete for {PROVINCE_NAME}\n")
+if __name__ == "__main__":
+    try:
+        main()
+    except FileNotFoundError as e:
+        print(f"Error: Missing required file - {e}")
+        exit(1)
+    except Exception as e:
+        print(f"Error processing DEM data: {e}")
+        exit(1)
