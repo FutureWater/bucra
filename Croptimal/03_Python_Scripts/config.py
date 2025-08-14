@@ -37,6 +37,7 @@ class CroptimalConfig:
         self.resolution_meters = int(os.environ.get("RESOLUTION", "250"))
         self.local_projection = os.environ.get("LOCAL_PROJ", "EPSG:32636")
         self.no_data_value = -9999.0
+        self.limit_no_data_value = 0.0
         self.lapse_rate = -0.0065
         
         # Input file paths

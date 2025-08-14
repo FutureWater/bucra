@@ -52,7 +52,7 @@ def process_slope_suitability(config, folder_params):
         
         # Apply fuzzy membership
         slope_limit = fuzzy_membership(slope_data, fuzzy_function, limits)
-        slope_limit[slope_data == config.no_data_value] = config.no_data_value
+        slope_limit[slope_data == config.no_data_value] = config.limit_no_data_value
         
         # Save output
         output_dir = config.get_output_path('suitability', 'Elevation', dir=True)
@@ -61,7 +61,7 @@ def process_slope_suitability(config, folder_params):
         out_profile = slope_meta.copy()
         out_profile.update({
             'dtype': 'float32',
-            'nodata': config.no_data_value,
+            'nodata': config.limit_no_data_value,
             'compress': 'lzw'
         })
         
@@ -107,7 +107,7 @@ def process_ndvi_suitability(config, folder_params):
     
     # Apply fuzzy membership
     ndvi_limit = fuzzy_membership(max_ndvi, fuzzy_function, limits)
-    ndvi_limit[max_ndvi == config.no_data_value] = config.no_data_value
+    ndvi_limit[max_ndvi == config.no_data_value] = config.limit_no_data_value
     
     # Save output
     output_dir = config.get_output_path('suitability', 'NDVI', dir = True)
@@ -116,7 +116,7 @@ def process_ndvi_suitability(config, folder_params):
     out_profile = ndvi_meta.copy()
     out_profile.update({
         'dtype': 'float32',
-        'nodata': config.no_data_value,
+        'nodata': config.limit_no_data_value,
         'compress': 'lzw'
     })
     
@@ -159,7 +159,7 @@ def process_soil_nutrient_content(config, folder_params):
             
             # Apply fuzzy membership
             snc_limit = fuzzy_membership(snc_data, fuzzy_function, limits)
-            snc_limit[snc_data == config.no_data_value] = config.no_data_value
+            snc_limit[snc_data == config.no_data_value] = config.limit_no_data_value
             
             # Save output
             output_dir = config.get_output_path('suitability', 'Soil_Nutrient_Content', dir = True)
@@ -168,7 +168,7 @@ def process_soil_nutrient_content(config, folder_params):
             out_profile = snc_meta.copy()
             out_profile.update({
                 'dtype': 'float32',
-                'nodata': config.no_data_value,
+                'nodata': config.limit_no_data_value,
                 'compress': 'lzw'
             })
             
@@ -227,7 +227,7 @@ def process_soil_hydraulic_properties(config, folder_params):
         
         # Apply fuzzy membership
         shp_limit = fuzzy_membership(weighted_avg, fuzzy_function, limits)
-        shp_limit[weighted_avg == config.no_data_value] = config.no_data_value
+        shp_limit[weighted_avg == config.no_data_value] = config.limit_no_data_value
         
         # Save suitability output
         output_dir = config.get_output_path('suitability', 'Soil_Hydraulic_Properties', dir = True)
@@ -237,7 +237,7 @@ def process_soil_hydraulic_properties(config, folder_params):
         out_profile.update({
             'dtype': 'float32',
             'count': 1,
-            'nodata': config.no_data_value,
+            'nodata': config.limit_no_data_value,
             'compress': 'lzw'
         })
         

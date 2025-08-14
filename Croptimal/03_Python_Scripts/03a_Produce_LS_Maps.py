@@ -134,43 +134,60 @@ def main():
             
             # Read and apply weights to each layer
             with rasterio.open(files['ndvi'][0]) as src:
-                no_data_mask = src.read(1) == config.no_data_value
-                ndvi_data = src.read(1) * ndvi_weight
+                ndvi_data = src.read(1)*ndvi_weight
+                valid_data = ndvi_data != config.limit_no_data_value
+
+                valid_mask = np.zeros(ndvi_data.shape, dtype=bool)
+                valid_mask |= valid_data
                 output_meta = src.meta.copy()
             
             with rasterio.open(temp_files[0]) as src:
                 temp_data = src.read(1) * temp_weight
+                valid_data = temp_data != config.limit_no_data_value
+                valid_mask |= valid_data
+
             
             with rasterio.open(ksat_file) as src:
                 ksat_data = src.read(1) * ksat_weight
+                valid_data = ksat_data != config.limit_no_data_value
+                valid_mask |= valid_data
             
             with rasterio.open(wcavail_file) as src:
                 wcavail_data = src.read(1) * wcavail_weight
+                valid_data = wcavail_data != config.limit_no_data_value
+                valid_mask |= valid_data
             
             with rasterio.open(potassium_file) as src:
                 potassium_data = src.read(1) * potassium_weight
+                valid_data = potassium_data != config.no_data_value
+                valid_mask |= valid_data
             
             with rasterio.open(phosphorus_file) as src:
                 phosphorus_data = src.read(1) * phosphorus_weight
+                valid_data = phosphorus_data != config.no_data_value
+                valid_mask |= valid_data
             
             with rasterio.open(slope_file) as src:
                 slope_data = src.read(1) * slope_weight
+                valid_data = slope_data != config.no_data_value
+                valid_mask |= valid_data
             
             # Sum all weighted layers
-            suitability_data = (ndvi_data + temp_data + potassium_data + 
-                              phosphorus_data + slope_data + ksat_data + wcavail_data)
+            suitability_data = (ndvi_data + temp_data + 
+                                potassium_data + phosphorus_data + 
+                                slope_data + ksat_data + wcavail_data)
             
             # Apply no-data mask
-            suitability_data[no_data_mask] = config.no_data_value
+            # suitability_data[~valid_mask] = 0
             
             # Save result
-            filename = f"Land_Suitability_{scenario_name}_{crop}_{season_label}.tif"
+            filename = f"LS_{scenario_name}_{crop}_{season_label}.tif"
             output_path = output_dir / filename
             
             output_meta.update({
                 'dtype': 'float32',
                 'count': 1,
-                'nodata': config.no_data_value,
+                'nodata': 0,
                 'compress': 'lzw'
             })
             

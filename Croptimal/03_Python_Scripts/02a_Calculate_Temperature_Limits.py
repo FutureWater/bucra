@@ -168,7 +168,7 @@ def main():
                 temperature_upper_limit = fuzzy_membership(tmax_w_data, 'Decreasing', [t_optimal_end, t_upper])
                 temperature_limit = (temperature_lower_limit + temperature_upper_limit) * 0.5
                 temperature_limit = temperature_limit.astype(np.float32)
-                temperature_limit[~tmax_valid] = config.no_data_value
+                temperature_limit[~tmax_valid] = config.limit_no_data_value
 
                 # Save output
                 season_label = f"{month_abbrs[0]}-{month_abbrs[-1]}"
@@ -180,7 +180,7 @@ def main():
                 meta.update({
                     'dtype': 'float32',
                     'count': 1,
-                    'nodata': config.no_data_value,
+                    'nodata': config.limit_no_data_value,
                     'compress': 'lzw'
                 })
 
