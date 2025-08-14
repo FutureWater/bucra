@@ -18,8 +18,19 @@ import pandas as pd
 import requests
 
 # Initialize Google Earth Engine with authentication
-ee.Authenticate(force=True)
-ee.Initialize()
+# Open EE API
+cloud_project = 'ee-ameliafdezrodriguez2' # replace with your project id
+
+try:
+    ee.Initialize(
+        project=cloud_project,
+        opt_url='https://earthengine-highvolume.googleapis.com')
+    
+except:
+    ee.Authenticate()
+    ee.Initialize(
+        project=cloud_project,
+        opt_url='https://earthengine-highvolume.googleapis.com')
 
 # Fetch farmer field data from the API
 url_api = "https://sosia.tahmo.org/api/fields/"
@@ -32,8 +43,10 @@ response_api = requests.request(
     "GET", url_api, headers=headers_api, data=payload_api)
 print(response_api.json())
 
+# Initialize big table to store all farmers
+historical_df_all = pd.DataFrame()
 # Process each farmer in the response data
-for farmer in response_api.json()[:1]:
+for farmer in response_api.json()[0:10]:
     # Extract farmer field information from JSON
     field_id = farmer["id"]
     print(field_id)
@@ -152,7 +165,7 @@ for farmer in response_api.json()[:1]:
     historical_end_date = ee.Date("2022-12-31")
     current_day = date.today()
     current_day_str = str(current_day)
-    today_ee = ee.Date(str(current_day))
+    today_ee = ee.Date(current_day_str)
     today_formatted = today_ee.format("YYYY-MM-dd")
     past_date = today_ee.advance(-10, "day")
     past_date_formatted = past_date.format("YYYY-MM-dd")
@@ -256,7 +269,7 @@ for farmer in response_api.json()[:1]:
         """Add Date property to image based on days from planting date."""
         day_index = ee.Number.parse(img.get("system:index"))
         date_val = planting_date.advance(day_index, "day")
-        return img.set("Date", date_val)
+        return img.set("advised_at", date_val)
 
     et_ref_with_date = et_ref_processed.map(add_millisecond_date)
 
@@ -299,7 +312,7 @@ for farmer in response_api.json()[:1]:
         """Add Date property for development stage images."""
         day_index = ee.Number.parse(img.get("system:index"))
         date_val = planting_date.advance(day_index, "day")
-        return img.set("Date", date_val)
+        return img.set("advised_at", date_val)
 
     et_dev_with_date = et_dev_stage.map(add_dev_stage_date)
 
@@ -334,7 +347,7 @@ for farmer in response_api.json()[:1]:
         """Add Date property for mid-season stage images."""
         day_index = ee.Number.parse(img.get("system:index"))
         date_val = season_mid_start.advance(day_index, "day")
-        return img.set("Date", date_val)
+        return img.set("advised_at", date_val)
 
     et_mid_with_date = et_mid_stage.map(add_mid_stage_date)
 
@@ -369,7 +382,7 @@ for farmer in response_api.json()[:1]:
         """Add Date property for end stage images."""
         day_index = ee.Number.parse(img.get("system:index"))
         date_val = season_end_start.advance(day_index, "day")
-        return img.set("Date", date_val)
+        return img.set("advised_at", date_val)
 
     et_end_with_date = et_end_stage.map(add_end_stage_date)
 
@@ -440,7 +453,7 @@ for farmer in response_api.json()[:1]:
     total_irrigation = et_all_renamed.map(calculate_irrigation_needs)
 
     # Set up filters and joins for combining datasets
-    date_filter = ee.Filter.equals(leftField="Date", rightField="Date")
+    date_filter = ee.Filter.equals(leftField="advised_at", rightField="advised_at")
     doy_filter = ee.Filter.equals(leftField="DOY", rightField="DOY")
     simple_join = ee.Join.inner()
 
@@ -498,7 +511,7 @@ for farmer in response_api.json()[:1]:
             .set("Etc", et_crop_mean)
             .set("Irrvol", irr_vol_mean)
             .set("Irrtime", irr_time_mean)
-            .set("Date", doy)
+            .set("advised_at", doy)
             .set("ModelRun", model_run_id)
         )
 
@@ -508,7 +521,7 @@ for farmer in response_api.json()[:1]:
     # Convert to a list format for API
     field_data_list = (
         field_data_images.reduceColumns(
-            ee.Reducer.toList(5), ["Date", "ModelRun",
+            ee.Reducer.toList(5), ["advised_at", "ModelRun",
                                    "Etc", "Irrvol", "Irrtime"]
         )
         .values()
@@ -519,38 +532,50 @@ for farmer in response_api.json()[:1]:
     historical_df = pd.DataFrame(
         field_data_list.getInfo(),
         columns=[
-            "date",
+            "advised_at",
             "modelRun",
-            "evaporation",
-            "advisedWaterVolume",
-            "advisedIrrigationTime",
+            "evaporation_mm_day",
+            "water_volume_advice_m3_day",
+            "irrigation_time_advice_minutes",
         ],
     )
 
     # Format dates and add required columns
     current_year = 2024  # Hardcoded for the example
-    historical_df["date"] = pd.to_datetime(
-        current_year * 1000 + historical_df["date"], format="%Y%j")
-    historical_df["modelRun"] = historical_df["date"].dt.strftime(
+    historical_df["advised_at"] = pd.to_datetime(
+        current_year * 1000 + historical_df["advised_at"], format="%Y%j")
+    historical_df["modelRun"] = historical_df["advised_at"].dt.strftime(
         "%Y%m%d") + "_SAT" + current_day_str
-    historical_df["dateDisplay"] = historical_df["date"].dt.strftime(
+    historical_df["dateDisplay"] = historical_df["advised_at"].dt.strftime(
         "%d-%m").map(lambda x: str(x)[-5:])
-    historical_df["date"] = pd.to_datetime(
-        historical_df["date"], format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
-    historical_df["field"] = field_id
+    historical_df["advised_at"] = pd.to_datetime(
+        historical_df["advised_at"], format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
+    historical_df["field_id"] = field_id
+
+    historical_df['name'] = farmer['name']
+    historical_df['latitude'] = lat_float
+    historical_df['longitude'] = long_float
+    historical_df['crop'] = crop_type
+
 
     # Select and order columns
     historical_df = historical_df[
-        [
-            "date",
-            "dateDisplay",
-            "modelRun",
-            "evaporation",
-            "advisedWaterVolume",
-            "advisedIrrigationTime",
-            "field",
+        [   "name",
+            "latitude",
+            "longitude",
+            "crop",
+            "field_id",
+            "advised_at",
+            # "dateDisplay",
+            # "modelRun",
+            "evaporation_mm_day",
+            "water_volume_advice_m3_day",
+            "irrigation_time_advice_minutes",
         ]
     ]
+
+    historical_df_all = pd.concat([historical_df_all,historical_df], axis=0)
+    historical_df_all.to_csv('./sosia_dummy_data.csv')
 
     # Convert to JSON for API
     historical_json = historical_df.to_json(orient="records")
@@ -563,9 +588,9 @@ for farmer in response_api.json()[:1]:
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_post = requests.post(
-        url_post, headers=headers_post, data=historical_json)
-    print(response_post.json())
+    # response_post = requests.post(
+    #     url_post, headers=headers_post, data=historical_json)
+    # print(response_post.json())
 
     # --------------------------------------------------------------
     # HINDCAST CALCULATION - Recent and current irrigation needs
@@ -726,11 +751,11 @@ for farmer in response_api.json()[:1]:
             return image.addBands(net_radiation).addBands(wind_speed)
 
         # Calculate radiation and wind for all images
-        cfsv2_with_radiation = cfsv2_filtered.map(calculate_radiation_and_wind)
+        cfsv2_with_radiation_wind = cfsv2_filtered.map(calculate_radiation_and_wind)
         cfsv2_temperature = cfsv2_filtered.select(
             "Temperature_height_above_ground")
 
-        # Calculate daily means over the hindcast period
+        # Get number of days in last week
         days_count = yesterday_formatted.difference(week_ago_formatted, "days")
 
         # Function to calculate daily means
@@ -742,9 +767,9 @@ for farmer in response_api.json()[:1]:
             doy = ee.Number.parse(start_date.format("DDD"))
 
             return (
-                cfsv2_with_radiation.filterDate(start_date, end_date)
+                cfsv2_with_radiation_wind.filterDate(start_date, end_date)
                 .mean()
-                .set("Date", date_formatted)
+                .set("advised_at", date_formatted)
                 .set("DOY", doy)
             )
 
@@ -762,7 +787,7 @@ for farmer in response_api.json()[:1]:
             return (
                 cfsv2_temperature.filterDate(start_date, end_date)
                 .max()
-                .set("Date", start_date.format("YYYY-MM-dd"))
+                .set("advised_at", start_date.format("YYYY-MM-dd"))
             )
 
         # Calculate daily maximum temperatures
@@ -785,7 +810,7 @@ for farmer in response_api.json()[:1]:
             return (
                 cfsv2_temperature.filterDate(start_date, end_date)
                 .min()
-                .set("Date", start_date.format("YYYY-MM-dd"))
+                .set("advised_at", start_date.format("YYYY-MM-dd"))
             )
 
         # Calculate daily minimum temperatures
@@ -936,7 +961,7 @@ for farmer in response_api.json()[:1]:
         doy = ee.Number.parse(image.get("system:index"))
         date_formatted = (planting_date.advance(
             doy, "day")).format("YYYY-MM-dd")
-        return image.set("Date", date_formatted)
+        return image.set("advised_at", date_formatted)
 
     kc_dev_with_date = kc_dev.map(add_date_to_kc_dev)
 
@@ -957,7 +982,7 @@ for farmer in response_api.json()[:1]:
         doy = ee.Number.parse(image.get("system:index"))
         date_formatted = (season_mid_start.advance(
             doy, "day")).format("YYYY-MM-dd")
-        return image.set("Date", date_formatted)
+        return image.set("advised_at", date_formatted)
 
     kc_mid_with_date = kc_mid_stage.map(add_date_to_kc_mid)
 
@@ -978,7 +1003,7 @@ for farmer in response_api.json()[:1]:
         doy = ee.Number.parse(image.get("system:index"))
         date_formatted = (season_end_start.advance(
             doy, "day")).format("YYYY-MM-dd")
-        return image.set("Date", date_formatted)
+        return image.set("advised_at", date_formatted)
 
     kc_end_with_date = kc_end_stage.map(add_date_to_kc_end)
 
@@ -1091,7 +1116,7 @@ for farmer in response_api.json()[:1]:
             .set("Etc", et_crop_mean)
             .set("Irrvol", irr_vol_mean)
             .set("Irrtime", irr_time_mean)
-            .set("Date", doy)
+            .set("advised_at", doy)
             .set("ModelRun", model_run_id)
         )
 
@@ -1101,7 +1126,7 @@ for farmer in response_api.json()[:1]:
     # Convert to a list format for API
     hindcast_data_list = (
         hindcast_data_images.reduceColumns(
-            ee.Reducer.toList(5), ["Date", "ModelRun",
+            ee.Reducer.toList(5), ["advised_at", "ModelRun",
                                    "Etc", "Irrvol", "Irrtime"]
         )
         .values()
@@ -1112,46 +1137,46 @@ for farmer in response_api.json()[:1]:
     hindcast_df = pd.DataFrame(
         hindcast_data_list.getInfo(),
         columns=[
-            "date",
+            "advised_at",
             "modelRun",
-            "evaporation",
-            "advisedWaterVolume",
-            "advisedIrrigationTime",
+            "evaporation_mm_day",
+            "water_volume_advice_m3_day",
+            "irrigation_time_advice_minutes",
         ],
     )
 
     # Round evaporation values
-    hindcast_df["evaporation"] = hindcast_df["evaporation"].round(2)
+    hindcast_df["evaporation_mm_day"] = hindcast_df["evaporation_mm_day"].round(2)
 
     # Format dates and add required columns
     current_year = 2024  # Hardcoded for the example
-    hindcast_df["date"] = pd.to_datetime(
-        current_year * 1000 + hindcast_df["date"], format="%Y%j")
-    hindcast_df["modelRun"] = hindcast_df["date"].dt.strftime(
+    hindcast_df["advised_at"] = pd.to_datetime(
+        current_year * 1000 + hindcast_df["advised_at"], format="%Y%j")
+    hindcast_df["modelRun"] = hindcast_df["advised_at"].dt.strftime(
         "%Y%m%d") + "_SAT" + current_day_str
 
     # Add display date with offset
-    hindcast_df["datedisp"] = hindcast_df["date"] + pd.DateOffset(days=0)
+    hindcast_df["datedisp"] = hindcast_df["advised_at"] + pd.DateOffset(days=0)
     hindcast_df["dateDisplay"] = hindcast_df["datedisp"].dt.strftime(
         "%d-%m").map(lambda x: str(x)[-5:])
 
     # Format date column for API
-    hindcast_df["date"] = pd.to_datetime(
-        hindcast_df["date"] + pd.DateOffset(days=0), format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
+    hindcast_df["advised_at"] = pd.to_datetime(
+        hindcast_df["advised_at"] + pd.DateOffset(days=0), format="%d-%m-%Y").dt.strftime("%Y-%m-%d")
 
     # Add field ID
-    hindcast_df["field"] = field_id
+    hindcast_df["field_id"] = field_id
 
     # Select and order columns
     hindcast_df = hindcast_df[
         [
-            "date",
+            "advised_at",
             "dateDisplay",
             "modelRun",
-            "evaporation",
-            "advisedWaterVolume",
-            "advisedIrrigationTime",
-            "field",
+            "evaporation_mm_day",
+            "water_volume_advice_m3_day",
+            "irrigation_time_advice_minutes",
+            "field_id",
         ]
     ]
 
@@ -1166,6 +1191,6 @@ for farmer in response_api.json()[:1]:
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_hindcast = requests.post(
-        url_hindcast, headers=headers_hindcast, data=hindcast_json)
-    print(response_hindcast.json())
+    # response_hindcast = requests.post(
+    #     url_hindcast, headers=headers_hindcast, data=hindcast_json)
+    # print(response_hindcast.json())

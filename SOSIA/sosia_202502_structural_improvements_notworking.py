@@ -29,8 +29,19 @@ import requests
 
 def initialize_gee():
     """Initialize Google Earth Engine with authentication."""
-    ee.Authenticate()
-    ee.Initialize()
+    cloud_project = 'ee-ameliafdezrodriguez2' # replace with your project id
+
+    try:
+        ee.Initialize(
+            project=cloud_project,
+            opt_url='https://earthengine-highvolume.googleapis.com')
+        
+    except:
+        ee.Authenticate()
+        ee.Initialize(
+            project=cloud_project,
+            opt_url='https://earthengine-highvolume.googleapis.com')
+
 
 
 def fetch_farmer_data(api_url, headers):
@@ -118,36 +129,30 @@ def load_datasets():
     }
 
 
-def create_clipping_function(buffer_geometry):
-    """Create a function that clips images to a buffer geometry."""
-    def clip_image(image):
-        return image.clip(buffer_geometry)
-    return clip_image
+def clip_image_to_buffer(buffer_geometry, image):
+    """Function that clips images to a buffer geometry."""
+    return image.clip(buffer_geometry)
 
 
-def create_wapor_correction_function():
-    """Creates a function to correct WAPOR RET values (divide by 10)."""
-    def correct_wapor(img):
-        corrected = img.select("L1_RET_E").divide(10).rename("corrected")
-        return img.addBands(corrected)
-    return correct_wapor
+def wapor_correction(img):
+    """Function to correct WAPOR RET values (divide by 10)."""
+    corrected = img.select("L1_RET_E").divide(10).rename("corrected")
+    return img.addBands(corrected)
 
 
-def create_wapor_day_average_function(wapor_corr):
-    """Create a function to calculate daily averages of WAPOR data for specific days of year."""
-    def wapor_day_average(day_of_year):
-        day_images = wapor_corr.select("corrected").filter(
+def wapor_daily_average(wapor_corr,day_of_year):
+    """Function to calculate daily averages of WAPOR data for specific days of year."""
+    day_images = wapor_corr.select("corrected").filter(
             ee.Filter.calendarRange(start=day_of_year, field="day_of_year")
         )
-        mean_wapor = (
+    mean_wapor = (
             ee.Image(day_images.mean())
             .multiply(100)
             .round()
             .divide(100)
             .set("DOY", day_of_year)
         )
-        return mean_wapor
-    return wapor_day_average
+    return mean_wapor
 
 
 def calculate_historical_et(stages, wapor_day_avg_func, kc_values, planting_date, millis_per_day):
@@ -777,199 +782,199 @@ def format_data_for_api(image_collection, clip_geo, field_id, current_date):
 def post_data_to_api(data, url, headers):
     """Post data to API endpoint."""
     data_json = data.to_json(orient="records")
-    response = requests.post(url, headers=headers, data=data_json)
-    return response.json()
+    # response = requests.post(url, headers=headers, data=data_json)
+    return #response.json()
 
 
-# def main():
+def main():
 
-"""
-Main execution function.
-"""
-# Initialize Earth Engine
-initialize_gee()
+    """
+    Main execution function.
+    """
+    # Initialize Earth Engine
+    initialize_gee()
 
-# API endpoints and authentication
-api_config = {
-    "field_url": "https://sosia.tahmo.org/api/fields/",
-    "schedule_url": "https://sosia.tahmo.org/api/seasonal_schedule/",
-    "hindcast_url": "https://sosia.tahmo.org/api/hindcast/",
-    "tahmo_api_auth": "Basic ZnV0dXJld2F0ZXI6R2MzYVdMN3kyckRkR2Y3RQ==",
-    "sosia_api_auth": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg=="
-}
-
-# Headers for SOSIA API
-sosia_headers = {
-    "Authorization": api_config["sosia_api_auth"]
-}
-
-# Headers for TAHMO API
-tahmo_headers = {
-    "Authorization": api_config["tahmo_api_auth"]
-}
-
-# Headers for POST requests
-post_headers = {
-    "Content-type": "application/json",
-    "Authorization": api_config["sosia_api_auth"]
-}
-
-# Load Earth Engine datasets
-datasets = load_datasets()
-
-# Get farmer field data
-farmer_data = fetch_farmer_data(api_config["field_url"], sosia_headers)
-
-# Constants
-millis_per_day = 24 * 60 * 60 * 1000
-current_date = date.today()
-today_ee = ee.Date(str(current_date))
-
-# Process each farmer field
-for farmer in farmer_data:
-    # Extract basic field information
-    field_id = farmer["id"]
-    field_name = farmer["name"]
-    print(f"Processing field: {field_id} - {field_name}")
-
-    # Extract coordinates
-    latitude = farmer["latitude"]
-    longitude = farmer["longitude"]
-    coords_float = (float(longitude), float(latitude))
-    point = create_point_geometry(*coords_float)
-    point_string = f"{longitude},{latitude}"
-
-    # Create buffer for spatial analysis
-    clip_geo = point.buffer(30)
-    clip_func = create_clipping_function(clip_geo)
-
-    # Extract field parameters
-    drip_lines = farmer["numberOfDriplines"]
-    drip_length = farmer["lengthOfDriplines"]
-    bed_width = farmer["bedWidth"]
-    emitter_spacing = farmer["emitterSpacing"]
-    flow_rate = farmer["emitterFlowRate"]
-    init_time = farmer["initialisationTime"]
-
-    # Calculate irrigation system parameters
-    irr_params = calculate_irrigation_params(
-        drip_lines, drip_length, bed_width, emitter_spacing, flow_rate, init_time
-    )
-
-    # Extract crop information
-    crop_type = farmer["cropSpecific"]["cropType"]
-    planting_date = ee.Date(farmer["cropSpecific"]["plantingDate"])
-    harvest_date = ee.Date(
-        farmer["cropSpecific"]["lastExpectedHarvestingDate"])
-
-    # Get crop-specific parameters
-    crop_params = get_crop_parameters(crop_type)
-
-    # Calculate growth stages
-    stages = calculate_growth_stages(
-        planting_date, harvest_date,
-        crop_params["dev_days"], crop_params["mid_days"]
-    )
-
-    # Process WAPOR data
-    wapor_filtered = datasets["wapor_ret"].filterDate(
-        ee.Date("2010-01-01"), ee.Date("2022-12-31")
-    ).map(clip_func)
-
-    wapor_correct_func = create_wapor_correction_function()
-    wapor_corrected = wapor_filtered.map(wapor_correct_func)
-
-    wapor_day_avg_func = create_wapor_day_average_function(wapor_corrected)
-
-    # Define day sequences for each stage
-    days_dev = ee.List.sequence(
-        stages["dev_start"].millis(),
-        stages["dev_end"].millis(),
-        millis_per_day
-    ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
-
-    days_mid = ee.List.sequence(
-        stages["mid_start"].millis(),
-        stages["mid_end"].millis(),
-        millis_per_day
-    ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
-
-    days_end = ee.List.sequence(
-        stages["end_start"].millis(),
-        stages["end_end"].millis(),
-        millis_per_day
-    ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
-
-    # Create collections for each stage
-    wapor_collections = {
-        "dev": ee.ImageCollection(days_dev.map(wapor_day_avg_func)),
-        "mid": ee.ImageCollection(days_mid.map(wapor_day_avg_func)),
-        "end": ee.ImageCollection(days_end.map(wapor_day_avg_func))
+    # API endpoints and authentication
+    api_config = {
+        "field_url": "https://sosia.tahmo.org/api/fields/",
+        "schedule_url": "https://sosia.tahmo.org/api/seasonal_schedule/",
+        "hindcast_url": "https://sosia.tahmo.org/api/hindcast/",
+        "tahmo_api_auth": "Basic ZnV0dXJld2F0ZXI6R2MzYVdMN3kyckRkR2Y3RQ==",
+        "sosia_api_auth": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg=="
     }
 
-    # Calculate historical ET and irrigation needs
-    historical_et = calculate_historical_et(
-        stages, wapor_day_avg_func, crop_params, planting_date, millis_per_day
-    )
+    # Headers for SOSIA API
+    sosia_headers = {
+        "Authorization": api_config["sosia_api_auth"]
+    }
 
-    # Calculate irrigation needs
-    total_irrigation = calculate_irrigation_needs(
-        historical_et["et_stages"], irr_params)
+    # Headers for TAHMO API
+    tahmo_headers = {
+        "Authorization": api_config["tahmo_api_auth"]
+    }
 
-    # Join reference ET with crop ET and irrigation needs
-    join_filter = ee.Filter.equals(leftField="Date", rightField="Date")
-    simple_join = ee.Join.inner()
+    # Headers for POST requests
+    post_headers = {
+        "Content-type": "application/json",
+        "Authorization": api_config["sosia_api_auth"]
+    }
 
-    inner_join = ee.ImageCollection(
-        simple_join.apply(
-            historical_et["et_ref"], total_irrigation, join_filter)
-    )
+    # Load Earth Engine datasets
+    datasets = load_datasets()
 
-    historical_schedule = inner_join.map(
-        lambda feature: ee.Image.cat(feature.get(
-            "primary"), feature.get("secondary"))
-    )
+    # Get farmer field data
+    farmer_data = fetch_farmer_data(api_config["field_url"], sosia_headers)
 
-    # Format historical data for API
-    ################## Bug here ##################
-    historical_df = format_data_for_api(
-        historical_schedule, clip_geo, field_id, current_date)
+    # Constants
+    millis_per_day = 24 * 60 * 60 * 1000
+    current_date = date.today()
+    today_ee = ee.Date(str(current_date))
 
-    # Post historical data to API
-    historical_response = post_data_to_api(
-        historical_df, api_config["schedule_url"], post_headers
-    )
-    print(f"Historical data posted for field {field_id}")
+    # Process each farmer field
+    for farmer in farmer_data:
+        # Extract basic field information
+        field_id = farmer["id"]
+        field_name = farmer["name"]
+        print(f"Processing field: {field_id} - {field_name}")
 
-    # --- Hindcast (recent data) processing ---
+        # Extract coordinates
+        latitude = farmer["latitude"]
+        longitude = farmer["longitude"]
+        coords_float = (float(longitude), float(latitude))
+        point = create_point_geometry(*coords_float)
+        point_string = f"{longitude},{latitude}"
 
-    # Try to get TAHMO data
-    tahmo_data = process_tahmo_data(point_string, tahmo_headers)
+        # Create buffer for spatial analysis
+        buffer_geom = point.buffer(30)
+        clipped_image = clip_image_to_buffer(buffer_geom)
 
-    # Calculate hindcast ET
-    hindcast_et_ref = calculate_hindcast_et(
-        today_ee, datasets, clip_func, wapor_day_avg_func, tahmo_data
-    )
+        # Extract field parameters
+        drip_lines = farmer["numberOfDriplines"]
+        drip_length = farmer["lengthOfDriplines"]
+        bed_width = farmer["bedWidth"]
+        emitter_spacing = farmer["emitterSpacing"]
+        flow_rate = farmer["emitterFlowRate"]
+        init_time = farmer["initialisationTime"]
 
-    # Create Kc images for hindcast period
-    kc_images = create_kc_images(stages, wapor_collections, crop_params)
+        # Calculate irrigation system parameters
+        irr_params = calculate_irrigation_params(
+            drip_lines, drip_length, bed_width, emitter_spacing, flow_rate, init_time
+        )
 
-    # Calculate irrigation for hindcast period
-    join_by_doy = tahmo_data is not None
-    hindcast_irrigation = calculate_hindcast_irrigation(
-        hindcast_et_ref, kc_images, irr_params, not join_by_doy
-    )
+        # Extract crop information
+        crop_type = farmer["cropSpecific"]["cropType"]
+        planting_date = ee.Date(farmer["cropSpecific"]["plantingDate"])
+        harvest_date = ee.Date(
+            farmer["cropSpecific"]["lastExpectedHarvestingDate"])
 
-    # Format hindcast data for API
-    hindcast_df = format_data_for_api(
-        hindcast_irrigation, clip_geo, field_id, current_date)
-    hindcast_df["evaporation"] = hindcast_df["evaporation"].round(2)
+        # Get crop-specific parameters
+        crop_params = get_crop_parameters(crop_type)
 
-    # Post hindcast data to API
-    hindcast_response = post_data_to_api(
-        hindcast_df, api_config["hindcast_url"], post_headers
-    )
-    print(f"Hindcast data posted for field {field_id}")
+        # Calculate growth stages
+        stages = calculate_growth_stages(
+            planting_date, harvest_date,
+            crop_params["dev_days"], crop_params["mid_days"]
+        )
+
+        # Process WAPOR data
+        wapor_filtered = datasets["wapor_ret"].filterDate(
+            ee.Date("2010-01-01"), ee.Date("2022-12-31")
+        ).map(clipped_image)
+
+        wapor_correct_func = wapor_correction()
+        wapor_corrected = wapor_filtered.map(wapor_correct_func)
+
+        wapor_day_avg = wapor_daily_average(wapor_corrected)
+
+        # Define day sequences for each stage
+        days_dev = ee.List.sequence(
+            stages["dev_start"].millis(),
+            stages["dev_end"].millis(),
+            millis_per_day
+        ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
+
+        days_mid = ee.List.sequence(
+            stages["mid_start"].millis(),
+            stages["mid_end"].millis(),
+            millis_per_day
+        ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
+
+        days_end = ee.List.sequence(
+            stages["end_start"].millis(),
+            stages["end_end"].millis(),
+            millis_per_day
+        ).map(lambda ms: ee.Number.parse(ee.Date(ms).format("DDD")))
+
+        # Create collections for each stage
+        wapor_collections = {
+            "dev": ee.ImageCollection(days_dev.map(wapor_day_avg)),
+            "mid": ee.ImageCollection(days_mid.map(wapor_day_avg)),
+            "end": ee.ImageCollection(days_end.map(wapor_day_avg))
+        }
+
+        # Calculate historical ET and irrigation needs
+        historical_et = calculate_historical_et(
+            stages, wapor_day_avg, crop_params, planting_date, millis_per_day
+        )
+
+        # Calculate irrigation needs
+        total_irrigation = calculate_irrigation_needs(
+            historical_et["et_stages"], irr_params)
+
+        # Join reference ET with crop ET and irrigation needs
+        join_filter = ee.Filter.equals(leftField="Date", rightField="Date")
+        simple_join = ee.Join.inner()
+
+        inner_join = ee.ImageCollection(
+            simple_join.apply(
+                historical_et["et_ref"], total_irrigation, join_filter)
+        )
+
+        historical_schedule = inner_join.map(
+            lambda feature: ee.Image.cat(feature.get(
+                "primary"), feature.get("secondary"))
+        )
+
+        # Format historical data for API
+        ################## Bug here ##################
+        historical_df = format_data_for_api(
+            historical_schedule, buffer_geom, field_id, current_date)
+
+        # Post historical data to API
+        historical_response = post_data_to_api(
+            historical_df, api_config["schedule_url"], post_headers
+        )
+        print(f"Historical data posted for field {field_id}")
+
+        # --- Hindcast (recent data) processing ---
+
+        # Try to get TAHMO data
+        tahmo_data = process_tahmo_data(point_string, tahmo_headers)
+
+        # Calculate hindcast ET
+        hindcast_et_ref = calculate_hindcast_et(
+            today_ee, datasets, clipped_image, wapor_day_avg, tahmo_data
+        )
+
+        # Create Kc images for hindcast period
+        kc_images = create_kc_images(stages, wapor_collections, crop_params)
+
+        # Calculate irrigation for hindcast period
+        join_by_doy = tahmo_data is not None
+        hindcast_irrigation = calculate_hindcast_irrigation(
+            hindcast_et_ref, kc_images, irr_params, not join_by_doy
+        )
+
+        # Format hindcast data for API
+        hindcast_df = format_data_for_api(
+            hindcast_irrigation, buffer_geom, field_id, current_date)
+        hindcast_df["evaporation"] = hindcast_df["evaporation"].round(2)
+
+        # Post hindcast data to API
+        hindcast_response = post_data_to_api(
+            hindcast_df, api_config["hindcast_url"], post_headers
+        )
+        print(f"Hindcast data posted for field {field_id}")
 
 
 # if __name__ == "__main__":

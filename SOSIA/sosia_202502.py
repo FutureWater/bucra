@@ -5,8 +5,18 @@ import pandas as pd
 import requests
 
 # Open EE API
-ee.Authenticate()
-ee.Initialize()
+cloud_project = 'ee-ameliafdezrodriguez2' # replace with your project id
+
+try:
+    ee.Initialize(
+        project=cloud_project,
+        opt_url='https://earthengine-highvolume.googleapis.com')
+    
+except:
+    ee.Authenticate()
+    ee.Initialize(
+        project=cloud_project,
+        opt_url='https://earthengine-highvolume.googleapis.com')
 
 # This part loads in the farmer data from the API from the dashboard.
 # We need add data of the farmer to the specific points here.
@@ -24,7 +34,7 @@ response_api = requests.request(
 print(response_api.json())
 
 # Go over the farmer dictionary and load for each farmer all attributes...
-farmer = response_api.json()[0]
+farmer = response_api.json()[0:6]
 for farmer in response_api.json():
     # Assign all info from JSON file to variables.
     name = farmer["id"]
@@ -32,8 +42,8 @@ for farmer in response_api.json():
     fieldname = farmer["name"]
     Lat = farmer["latitude"]
     Long = farmer["longitude"]
-    if Lat == None or Long == None:
-        continue
+    # if Lat == None or Long == None:
+    #     continue
     latcoords = float(Lat)
     longcoords = float(Long)
 
@@ -488,9 +498,10 @@ for farmer in response_api.json():
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_post = requests.post(
-        url_post, headers=headers_post, data=data_json)
-    print(response_post.json())
+    # No post
+    # response_post = requests.post(
+    #     url_post, headers=headers_post, data=data_json)
+    # print(response_post.json())
 
     # ------------------------------------------------------------------------------------------------------------------------
 
@@ -1000,7 +1011,8 @@ for farmer in response_api.json():
         "Authorization": "Basic bC52ZXJzY2h1cmVuQGZ1dHVyZXdhdGVyLm5sOnA3XlE1OTdNNmx3Wg==",
     }
 
-    response_hind = requests.post(
-        url_hind, headers=headers_hind, data=data_json_hind)
+    # No post
+    # response_hind = requests.post(
+    #     url_hind, headers=headers_hind, data=data_json_hind)
 
-    response_hind.json()
+    # response_hind.json()
