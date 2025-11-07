@@ -19,7 +19,7 @@ import requests
 
 # Initialize Google Earth Engine with authentication
 # Open EE API
-cloud_project = 'ee-ameliafdezrodriguez2' # replace with your project id
+cloud_project = "sosia-468813" # replace with your project id
 
 try:
     ee.Initialize(
@@ -46,10 +46,9 @@ print(response_api.json())
 # Initialize big table to store all farmers
 historical_df_all = pd.DataFrame()
 # Process each farmer in the response data
-for farmer in response_api.json()[0:10]:
+for farmer in response_api.json()[0:2]:
     # Extract farmer field information from JSON
     field_id = farmer["id"]
-    print(field_id)
     field_name = farmer["name"]
     latitude = farmer["latitude"]
     longitude = farmer["longitude"]
@@ -176,11 +175,11 @@ for farmer in response_api.json()[0:10]:
     # Reference Evapotranspiration
     wapor_ret = ee.ImageCollection("FAO/WAPOR/2/L1_RET_E")
     # Global Precipitation
-    gpm = ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
+    # gpm = ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
     # Climate Forecast System
     cfsv2 = ee.ImageCollection("NOAA/CFSV2/FOR6H")
     # Digital Elevation Model
-    dem = ee.Image("NASA/NASADEM_HGT/001")
+    # dem = ee.Image("NASA/NASADEM_HGT/001")
 
     ############ Filter WAPOR data for the field area ####################
     # Create buffer around field point for spatial analysis (30m radius)
@@ -573,7 +572,7 @@ for farmer in response_api.json()[0:10]:
             "irrigation_time_advice_minutes",
         ]
     ]
-
+    historical_df[historical_df['evaporation_mm_day'] > 3] 
     historical_df_all = pd.concat([historical_df_all,historical_df], axis=0)
     historical_df_all.to_csv('./sosia_dummy_data.csv')
 
