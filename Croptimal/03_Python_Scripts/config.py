@@ -18,8 +18,9 @@ class CroptimalConfig:
     """
     
     def __init__(self):
-        # Get province from environment (set by main script) or use default for testing
+        # Get province and country from environment (set by main script) or use default for testing
         self.province_name = os.environ.get("PROVINCE", "Sharkia")
+        self.country_name = os.environ.get("COUNTRY", "Egypt")
         
         # Calculate base directory paths
         current_dir = Path.cwd()
@@ -46,7 +47,8 @@ class CroptimalConfig:
         self.cropping_calendar = Path(os.environ.get("CROPPING_CALENDER", current_dir / "Cropping_calendar.csv"))
         
         # Province-specific output directories
-        self.province_results_dir = self.results_dir / self.province_name
+        self.country_results_dir = self.results_dir / self.country_name
+        self.province_results_dir = self.country_results_dir / self.province_name
         self.dem_output_dir = self.province_results_dir / "DEM"
         self.slope_output_dir = self.province_results_dir / "Slope"
         self.temperature_output_dir = self.province_results_dir / "Temperature"

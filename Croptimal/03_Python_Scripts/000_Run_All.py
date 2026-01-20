@@ -50,13 +50,14 @@ def clean_temp_directory(temp_dir):
             pass  # File might be in use or already deleted
 
 
-def run_script_for_province(script_path, province_name, config):
+def run_script_for_province(script_path, country_name, province_name, config):
     """Run a single processing script for a specific province."""
     script_name = Path(script_path).stem
     print(f"Run {script_name} for {province_name}.")
     
     # Set up environment variables for the subprocess
     script_env = os.environ.copy()
+    script_env["COUNTRY"] = country_name
     script_env["PROVINCE"] = province_name
     script_env["RESOLUTION"] = str(config.resolution_meters)
     script_env["LOCAL_PROJ"] = config.local_projection
@@ -103,6 +104,16 @@ def load_province_names(config):
     
     return province_names
 
+def load_country_name(config):
+    """Load country name from shapefile."""
+    provinces_gdf = gpd.read_file(config.provinces_shapefile)
+    country_name = provinces_gdf["ADM0_EN"].tolist()[0]
+    
+    if not country_name:
+        raise ValueError("No country name found in shapefile")
+    
+    return country_name
+
 
 def main():
     """Main orchestration function."""
@@ -120,6 +131,10 @@ def main():
         },
         TEMP_DIR=str(config.temp_dir)
     ):
+        # Load country name
+        country_name = load_country_name(config)
+        print(f"Country: {country_name}")
+
         # Load province names
         province_names = load_province_names(config)
         print(f"Found {len(province_names)} provinces: {', '.join(province_names)}")
@@ -129,7 +144,7 @@ def main():
         print(f"Found {len(processing_scripts)} processing scripts")
         
         # Process each province (currently set to last province only for testing)
-        for province_name in province_names[:]:
+        for province_name in province_names:
             print(f"\n{'='*60}")
             print(f"Processing province: {province_name}")
             print(f"{'='*60}")
@@ -140,7 +155,7 @@ def main():
             # Run each processing script for this province
             for script_path in processing_scripts:
                 try:
-                    run_script_for_province(script_path, province_name, config)
+                    run_script_for_province(script_path, country_name, province_name, config)
                     print("\n")
                 except subprocess.CalledProcessError:
                     print(f"Failed to process {province_name} with {Path(script_path).name}")

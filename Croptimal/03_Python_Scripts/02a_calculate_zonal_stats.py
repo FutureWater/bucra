@@ -30,14 +30,16 @@ def get_variable_name(raster_path):
     filename = Path(raster_path).stem
     if 'Temperature' in raster_path:
         filename = filename.replace('_', ' ')
-    elif 'Land_Suitability' not in raster_path:
+    if 'Land_Suitability' not in raster_path:
         filename = filename.split('_')[0]
     return filename
 
 def calculate_zonal_stats(shapefile_path, raster_folder, nodata_value, province_name, max_communes=None, max_rasters = None):
     """Calculate zonal statistics for raster files within commune boundaries."""
     # Load communes
-    communes = load_communes(shapefile_path, province_name)
+    communes_list = load_communes(shapefile_path, province_name)
+    communes_gdf = gpd.read_file(shapefile_path)
+    communes_gdf = communes_gdf[communes_gdf['ADM1_EN'] == province_name]
     
     # Find all raster files
     raster_files = list(Path(raster_folder).rglob('*.tif'))
@@ -46,22 +48,21 @@ def calculate_zonal_stats(shapefile_path, raster_folder, nodata_value, province_
     
     # Limit for testing if specified
     if max_communes:
-        communes = communes[:max_communes]
+        communes_list = communes_list[:max_communes]
     if max_rasters:
         raster_files = raster_files[:max_rasters]
 
-    commune_names = [f['properties']['ADM3_PCODE'] for f in communes]
-    commune_geoms = [shape(f['geometry']) for f in communes]
+    commune_names = [f['properties']['ADM3_PCODE'] for f in communes_list]
+    commune_geoms = [shape(f['geometry']) for f in communes_list]
 
     
     # Initialize results
     results = {'Commune': commune_names}
     
-    i = 1
     # Process each raster file
+    i = 1
     for raster_path in raster_files:
         variable_name = get_variable_name(str(raster_path))
-
         # Progress update
         print(f'Processing {variable_name }. Raster {i}/{len(raster_files)}')
         i += 1
@@ -78,11 +79,17 @@ def calculate_zonal_stats(shapefile_path, raster_folder, nodata_value, province_
                     mean_val = np.mean(valid_pixels).round(3) if len(valid_pixels) > 0 else np.nan
                     commune_means.append(mean_val)
                     
+                    # Add value to gdf for potential further use
+                    commune_row = communes_gdf[communes_gdf['ADM3_PCODE'] == geom['properties']['ADM3_PCODE']]
+                    commune_row[variable_name] = mean_val
                 except Exception:
                     commune_means.append(np.nan)
             
             results[variable_name] = commune_means
     
+    # Save gdf with new variables
+    output_shapefile = shapefile_path.parent / (shapefile_path.stem + '_with_zonal_stats.shp')
+    communes_gdf.to_file(output_shapefile)
     return pd.DataFrame(results)
 
 def reproject_shapefile(input_path, output_path, target_crs):
@@ -100,33 +107,33 @@ def main():
     print(f"Province: {config.province_name}")
     
     # File paths using config
-    suitability_files = config.province_results_dir / 'Suitability'
-    communes_file = config.gis_dir / 'egy_admbnda_adm3.shp'
+    raster_results_filepath = config.province_results_dir
+    communes_filepath = config.gis_dir / 'egy_admbnda_adm3.shp'
     
     # Reproject communes shapefile
-    communes_output_path = config.province_results_dir / 'egy_admbnda_adm3.shp'
-    reproject_shapefile(communes_file, communes_output_path, config.local_projection)
+    communes_reprojected_path = config.province_results_dir / 'egy_admbnda_adm3.shp'
+    reproject_shapefile(communes_filepath, communes_reprojected_path, config.local_projection)
     
     # Calculate zonal statistics (limit to 3 communes for testing)
-    zonal_stats_df = calculate_zonal_stats(communes_file, 
-                                           suitability_files, 
+    zonal_stats_df = calculate_zonal_stats(communes_reprojected_path, 
+                                           raster_results_filepath, 
                                            config.no_data_value,
                                            config.province_name,
                                            max_communes=None,
                                            max_rasters= None)
     
     # Save final results to csv
-    output_csv = config.province_results_dir / 'Suitability' / 'suitability_per_commune.csv'
+    output_csv = config.province_results_dir / 'variable_zonal_stats_per_commune.csv'
     zonal_stats_df.to_csv(output_csv)
     print(f"Processed {len(zonal_stats_df)} communes")
 
 # Main execution
 if __name__ == "__main__":
-    try:
-        main()
-    except FileNotFoundError as e:
-        print(f"Error: Missing required file - {e}")
-        exit(1)
-    except Exception as e:
-        print(f"Error processing parameter limits: {e}")
-        exit(1)
+    # try:
+    main()
+    # except FileNotFoundError as e:
+    #     print(f"Error: Missing required file - {e}")
+    #     exit(1)
+    # except Exception as e:
+    #     print(f"Error processing parameter limits: {e}")
+    #     exit(1)
