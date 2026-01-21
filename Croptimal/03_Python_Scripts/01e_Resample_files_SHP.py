@@ -48,7 +48,6 @@ def apply_unit_conversion(data, var_name, no_data_value):
     
     return converted_data
 
-
 def main():
     """Main processing function."""
     print(f"Processing Soil Hydraulic Properties: {' ' * 5}")
@@ -77,13 +76,16 @@ def main():
     output_dir = config.get_output_path('soil_hydraulic_properties', '', dir=True)
     
     # Process each variable
+    output_paths = []
     for var_name in var_names:
         print(f"    Processing {var_name} data...")
         
         # Get files for this variable
         var_files = [file for file in input_files if var_name in file]
         
+        
         # Process each file for this variable
+        var_results_dict = {}
         for file_path in var_files:
             with rasterio.open(file_path) as src:
                 # Calculate window that covers the buffered province extent
@@ -120,15 +122,23 @@ def main():
                 # Apply unit conversion
                 converted_data = apply_unit_conversion(destination_array, var_name, config.no_data_value)
                 
-                # Generate output filename
+                # Get layer name: topsoil or subsoil. And save to results dict.
                 layer_name = file_path.split("_")[-1].split(".")[0]  # Extract "Top" or "Sub"
-                output_name = f"{var_name}_{layer_name}_{config.province_name}.tif"
-                output_path = output_dir / output_name
-                
-                # Save processed data
-                with rasterio.open(output_path, 'w', **reference_dem['profile']) as dst:
-                    dst.write(converted_data.astype(rasterio.float32), 1)
-    
+                var_results_dict[layer_name] = converted_data
+
+        # Average top and subsoil layers
+        weighted_topsoil = var_results_dict['TOPSOIL'] * 0.3
+        weighted_subsoil = var_results_dict['SUBSOIL'] * 1.7
+        weighted_avg_data = (weighted_topsoil + weighted_subsoil) / 2.0
+
+        output_name = f"{var_name}_{config.province_name}.tif"
+        output_path = output_dir / output_name
+        
+        # Save processed data of variable
+        with rasterio.open(output_path, 'w', **reference_dem['profile']) as dst:
+            dst.write(weighted_avg_data.astype(rasterio.float32), 1)
+
+
     print("Soil hydraulic properties processing complete!")
 
 
