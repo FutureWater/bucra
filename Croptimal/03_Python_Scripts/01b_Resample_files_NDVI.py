@@ -73,7 +73,7 @@ def main():
             resampled_data[reference_dem['data'] == reference_dem['nodata']] = config.no_data_value
             
             # Save resampled data
-            output_path = ndvi_output_dir / f"NDVI_{month}.tif"
+            output_path = ndvi_output_dir / f"NDVI_{month}_{config.province_name}.tif"
             
             output_profile = reference_dem['profile'].copy()
             output_profile.update({

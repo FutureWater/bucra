@@ -28,7 +28,7 @@ class CroptimalConfig:
         base_dir = parent_dir.parent.parent
         
         # Set up main directories - use environment variables when available
-        self.data_dir = Path(os.environ.get("DATA_DIR", parent_dir / "01_Data"))
+        self.data_dir = Path(os.environ.get("DATA_DIR", parent_dir / "01_Data" / "Nile_Delta"))
         self.results_dir = Path(os.environ.get("RESULTS_DIR", parent_dir / "04_Results"))
         self.temp_dir = Path(os.environ.get("TEMP_DIR", parent_dir / "05_Temp"))
         self.gis_dir = base_dir / "GIS"
@@ -44,6 +44,7 @@ class CroptimalConfig:
         # Input file paths
         self.dem_file = self.data_dir / "DEM" / "DEM_NileDelta_250m.tif"
         self.provinces_shapefile = self.gis_dir / "Nile_delta_bnd_adm1.shp"
+        self.communes_shapefile = self.gis_dir / "egy_admbnda_adm3.shp"
         self.cropping_calendar = Path(os.environ.get("CROPPING_CALENDER", current_dir / "Cropping_calendar.csv"))
         
         # Province-specific output directories
@@ -56,6 +57,7 @@ class CroptimalConfig:
         self.shp_output_dir = self.province_results_dir / "Soil_Hydraulic_Properties"
         self.snc_output_dir = self.province_results_dir / "Soil_Nutrient_Content"
         self.ndvi_output_dir = self.province_results_dir / "NDVI"
+        self.new_communes_shapefile = self.province_results_dir / "Zonal_Stats_Communes"
         
         # Ensure all output directories exist
         for output_dir in [self.dem_output_dir, 
@@ -64,7 +66,8 @@ class CroptimalConfig:
                           self.suitability_output_dir,
                           self.shp_output_dir,
                           self.snc_output_dir,
-                          self.ndvi_output_dir]:
+                          self.ndvi_output_dir,
+                          self.new_communes_shapefile]:
             output_dir.mkdir(parents=True, exist_ok=True)
     
     def validate_inputs(self):
@@ -95,7 +98,8 @@ class CroptimalConfig:
             'suitability': self.suitability_output_dir,
             'shp': self.shp_output_dir,
             'snc': self.snc_output_dir,
-            'ndvi': self.ndvi_output_dir
+            'ndvi': self.ndvi_output_dir,
+            'zonal_stats_communes': self.new_communes_shapefile
         }
         
         # If it is a folder in dict: retrieve it or create it.

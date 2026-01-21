@@ -94,7 +94,7 @@ def main():
                 )
                 
                 # Save processed temperature data
-                output_path = var_output_dir / f"{var}_{month}.tif"
+                output_path = var_output_dir / f"{var}_{month}_{config.province_name}.tif"
                 
                 # Update profile with correct data type and nodata value
                 output_profile = reference_dem['profile'].copy()
