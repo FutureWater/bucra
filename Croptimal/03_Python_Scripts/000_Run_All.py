@@ -144,8 +144,7 @@ def main():
         print(f"Found {len(processing_scripts)} processing scripts")
         
         # Process each province (currently set to last province only for testing)
-        for province_name in province_names[:1]:
-            province_name = "Sharkia"
+        for province_name in province_names:
             print(f"\n{'='*60}")
             print(f"Processing province: {province_name}")
             print(f"{'='*60}")

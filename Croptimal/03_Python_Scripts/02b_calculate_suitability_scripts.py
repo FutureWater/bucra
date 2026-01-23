@@ -145,20 +145,25 @@ def update_crop_suitability_df(existing_df, new_results):
         new_results: New suitability results to add
     
     Returns:
-        tuple: (Updated DataFrame, count of new communes added)
+        tuple: (Updated DataFrame, count of new and updated communes)
     """
     if existing_df.empty:
-        return new_results, len(new_results)
+        return new_results, (len(new_results), 0)
     
+    # Update existing DataFrame with communes already present
+    existing_communes = existing_df['Commune'].values
+    existing_mask = new_results['Commune'].isin(existing_communes)
+    existing_df.update(new_results[existing_mask])
+
     # Find communes not already in existing data
     existing_communes = existing_df['Commune'].values
     new_communes_mask = ~new_results['Commune'].isin(existing_communes)
     new_rows = new_results[new_communes_mask]
     
     if new_rows.empty:
-        return existing_df, 0
+        return existing_df, (0, len(existing_mask))
     
-    return pd.concat([existing_df, new_rows], ignore_index=True), len(new_rows)
+    return pd.concat([existing_df, new_rows], ignore_index=True), (len(new_rows), len(existing_mask))
 
 
 def main():
@@ -195,11 +200,11 @@ def main():
         )
         
         # Update and save results
-        crop_suitability_df, new_count = update_crop_suitability_df(crop_suitability_df, new_results)
-        crop_suitability_df.to_csv(output_path, index=False)
+        crop_suitability_df, new_counts = update_crop_suitability_df(crop_suitability_df, new_results)
+        crop_suitability_df.to_csv(output_path, encoding='utf-8-sig', index=False)
         
-        if new_count > 0:
-            print(f"  {crop_name}: added {new_count} communes")
+        if new_counts[0] > 0:
+            print(f"  {crop_name}: added {new_counts[0]} communes, updated {new_counts[1]} communes")
         else:
             print(f"  {crop_name}: no new communes to add")
     
