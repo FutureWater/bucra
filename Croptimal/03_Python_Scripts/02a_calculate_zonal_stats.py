@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 from shapely.geometry import shape
 
-from IPython import embed
 
 # Import the centralized configuration
 from config import CroptimalConfig
@@ -97,9 +96,12 @@ def calculate_zonal_stats(config, communes_gdf, max_communes=None, max_rasters=N
     communes_gdf_with_zonal_stats.to_file(output_geopackage, driver='GPKG')
 
     # Print number of cells with no data
+    print("\nNumber of missing values per variable:")
     print(results_df.isna().sum())
+    print("Total number of missing values:", results_df.isna().sum().sum())
     print("\nPercentage of missing values:")
     print((results_df.isna().sum() / len(results_df) * 100).round(1))
+    print("Total percentage of missing values:", (results_df.isna().sum().sum() / (len(results_df) * (len(results_df.columns)-1)) * 100).round(1))
 
     return results_df
 

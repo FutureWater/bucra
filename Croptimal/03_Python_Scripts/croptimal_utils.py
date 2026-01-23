@@ -9,6 +9,7 @@ to avoid code duplication and ensure consistency.
 import numpy as np
 import rasterio
 import matplotlib.pyplot as plt
+import pandas as pd
 
 def load_reference_dem(config):
     """
@@ -48,73 +49,89 @@ def load_reference_dem(config):
         }
     
 
-def fuzzy_membership(raster, function_type, parameters):
+def fuzzy_membership(series, parameters) -> pd.Series:
     """
-    Apply fuzzy membership functions to raster data.
+    Apply fuzzy membership functions to pd Series of a variable.
 
+    Args:
+        series (pd.Series): Series of variable values.
+        function_type (str): Type of fuzzy function ('Increasing', 'Decreasing', 'Triangular', 'Trapezoidal').
+        parameters (dict): Parameters l1-l4 defining the fuzzy function, and the membership function shape.
+    
+    Returns:
+        pd.Series: Series with suitability values (fuzzy membership) between 0 and 1.
     """
-    result = raster.copy().astype(float)
+    result = series.copy().astype(float)
+    function_type = parameters['function_type']
 
     if function_type == "Increasing":
+        if 'l1' not in parameters or 'l2' not in parameters:
+            raise ValueError("Increasing function requires two parameters: l1 and l2")
         # Two parameters: [a, b]
         # below a = 0, between a-b = 0 to 1, above b = 1
-        a = parameters[0]
-        b = parameters[1]
+        a = parameters['l1']
+        b = parameters['l2']
         
-        result[raster <= a] = 0
-        result[raster >= b] = 1
-        mask = (a < raster) & (raster < b)
-        result[mask] = (raster[mask] - a) / (b - a)
+        result[series <= a] = 0
+        result[series >= b] = 1
+        mask = (a < series) & (series < b)
+        result[mask] = (series[mask] - a) / (b - a)
         
     elif function_type == "Decreasing":
+        if 'l1' not in parameters or 'l2' not in parameters:
+            raise ValueError("Decreasing function requires two parameters: l1 and l2")
         # Two parameters: [a, b]
         # below a = 1, between a-b = 1 to 0, above b = 0
-        a = parameters[0]
-        b = parameters[1]
+        a = parameters['l1']
+        b = parameters['l2']
         
-        result[raster <= a] = 1
-        result[raster >= b] = 0
-        mask = (a < raster) & (raster < b)
-        result[mask] = 1 - (raster[mask] - a) / (b - a)
+        result[series <= a] = 1
+        result[series >= b] = 0
+        mask = (a < series) & (series < b)
+        result[mask] = 1 - (series[mask] - a) / (b - a)
     
     elif function_type == "Triangular":
+        if 'l1' not in parameters or 'l2' not in parameters or 'l3' not in parameters:
+            raise ValueError("Triangular function requires three parameters: l1, l2, and l3")
         # Three parameters: [a, b, c]
         # below a = 0, a-b = 0 to 1, b-c = 1 to 0, above c = 0
-        a = parameters[0]
-        b = parameters[1]  # peak point
-        c = parameters[2]
+        a = parameters['l1']
+        b = parameters['l2']  # peak point
+        c = parameters['l3']
 
-        result[raster <= a] = 0
-        result[raster >= c] = 0
+        result[series <= a] = 0
+        result[series >= c] = 0
 
-        mask1 = (a < raster) & (raster < b)
-        mask2 = (b < raster) & (raster < c)
-        result[mask1] = (raster[mask1] - a) / (b - a)
-        result[mask2] = 1 - (raster[mask2] - b) / (c - b)
+        mask1 = (a < series) & (series < b)
+        mask2 = (b < series) & (series < c)
+        result[mask1] = (series[mask1] - a) / (b - a)
+        result[mask2] = 1 - (series[mask2] - b) / (c - b)
     
     elif function_type == "Trapezoidal":
+        if 'l1' not in parameters or 'l2' not in parameters or 'l3' not in parameters or 'l4' not in parameters:
+            raise ValueError("Trapezoidal function requires four parameters: l1, l2, l3, and l4")
         # Four parameters: [a, b, c, d]
         # below a = 0, a-b = 0 to 1, b-c = 1, c-d = 1 to 0, above d = 0
-        a = parameters[0]
-        b = parameters[1]  # start of plateau
-        c = parameters[2]  # end of plateau
-        d = parameters[3]
+        a = parameters['l1']
+        b = parameters['l2']  # start of plateau
+        c = parameters['l3']  # end of plateau
+        d = parameters['l4']
 
-        result[raster <= a] = 0
-        result[raster >= d] = 0
+        result[series <= a] = 0
+        result[series >= d] = 0
 
-        mask1 = (a < raster) & (raster < b)
-        mask2 = (b < raster) & (raster < c)
-        mask3 = (c < raster) & (raster < d)
-        result[mask1] = (raster[mask1] - a) / (b - a)
+        mask1 = (a < series) & (series < b)
+        mask2 = (b < series) & (series < c)
+        mask3 = (c < series) & (series < d)
+        result[mask1] = (series[mask1] - a) / (b - a)
         result[mask2] = 1
-        result[mask3] = 1 - (raster[mask3] - c) / (d - c)
+        result[mask3] = 1 - (series[mask3] - c) / (d - c)
     
     else:
         raise ValueError(f"Unknown function type: {function_type}. "
                         "Must be one of: 'Increasing', 'Decreasing', 'Triangular', 'Trapezoidal'")
     
-    if np.all(result == raster):
+    if np.all(result == series):
         raise ValueError("Result raster is the same as input raster. Fuzzy logic not applied")
     
     return result

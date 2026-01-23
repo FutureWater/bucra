@@ -28,7 +28,7 @@ config.validate_inputs()
 lapse_rate = config.lapse_rate
 
 # Find temperature input files
-input_files = glob.glob(str(config.data_dir / "Temperature" / "*.tif"))
+input_files = [config.data_dir / "Temperature" / "Tmax.tif", config.data_dir / "Temperature" / "Tmin.tif"]
 if not input_files:
     raise FileNotFoundError(f"No temperature files found in {config.data_dir / 'Temperature'}")
 

@@ -46,6 +46,7 @@ class CroptimalConfig:
         self.provinces_shapefile = self.gis_dir / "Nile_delta_bnd_adm1.shp"
         self.communes_shapefile = self.gis_dir / "egy_admbnda_adm3.shp"
         self.cropping_calendar = Path(os.environ.get("CROPPING_CALENDER", current_dir / "Cropping_calendar.csv"))
+        self.parameter_limits_file = self.scripts_dir / "Parameters_fuzzy.csv"
         
         # Province-specific output directories
         self.country_results_dir = self.results_dir / self.country_name
@@ -53,17 +54,19 @@ class CroptimalConfig:
         self.dem_output_dir = self.province_results_dir / "DEM"
         self.slope_output_dir = self.province_results_dir / "Slope"
         self.temperature_output_dir = self.province_results_dir / "Temperature"
-        self.suitability_output_dir = self.province_results_dir / "Suitability"
         self.shp_output_dir = self.province_results_dir / "Soil_Hydraulic_Properties"
         self.snc_output_dir = self.province_results_dir / "Soil_Nutrient_Content"
         self.ndvi_output_dir = self.province_results_dir / "NDVI"
         self.new_communes_shapefile = self.province_results_dir / "Zonal_Stats_Communes"
+
+        # Country-specific output directories
+        self.crop_suitability_dir = self.country_results_dir / "Crop_Suitability"
         
         # Ensure all output directories exist
         for output_dir in [self.dem_output_dir, 
                            self.slope_output_dir, 
                           self.temperature_output_dir,
-                          self.suitability_output_dir,
+                          self.crop_suitability_dir,
                           self.shp_output_dir,
                           self.snc_output_dir,
                           self.ndvi_output_dir,
@@ -95,7 +98,7 @@ class CroptimalConfig:
             'dem': self.dem_output_dir,
             'slope': self.slope_output_dir,
             'temperature': self.temperature_output_dir,
-            'suitability': self.suitability_output_dir,
+            'suitability': self.crop_suitability_dir,
             'shp': self.shp_output_dir,
             'snc': self.snc_output_dir,
             'ndvi': self.ndvi_output_dir,
