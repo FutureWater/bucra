@@ -56,20 +56,15 @@ def calculate_slope_sobel(dem_array, cell_size_meters, no_data_value):
 
 def main():
     """Main processing function."""
-    print(f"Processing DEM and Slope: {' ' * 20}")
-    
     # Initialize configuration
     config = CroptimalConfig()
     config.validate_inputs()
-    
-    print(f"Province: {config.province_name}")
-    
+    print(f"Processing DEM and Slope for {config.province_name}: {' ' * 20}")
+        
     # Load province boundary
     province_boundary = load_province_boundary(config)
     
-    # Process DEM data
-    print("Processing DEM data...")
-    
+    # Process DEM data    
     with rasterio.open(config.dem_file) as src:
         # Step 1: Crop DEM to province extent
         cropped_data, cropped_transform = mask(src, province_boundary.geometry, crop=True)
@@ -132,15 +127,11 @@ def main():
         })
     
     # Calculate slope
-    print("Calculating slope...")
     slope_data = calculate_slope_sobel(
         final_data[0], 
         config.resolution_meters, 
         config.no_data_value
     )
-    
-    # Save results
-    print("Saving results...")
     
     # Generate output paths
     dem_filename = f"DEM_{config.province_name}_{config.resolution_meters}m.tif"
@@ -157,7 +148,7 @@ def main():
     with rasterio.open(slope_path, "w", **final_profile) as dst:
         dst.write(slope_data.astype(rasterio.float32), 1)
     
-    print(f"Processing complete for {config.province_name}\n")
+    print(f"Processing complete for {config.province_name}.")
 
 
 if __name__ == "__main__":

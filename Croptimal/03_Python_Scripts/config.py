@@ -89,9 +89,7 @@ class CroptimalConfig:
         if missing_files:
             error_message = "Missing required input files:\n" + "\n".join(missing_files)
             raise FileNotFoundError(error_message)
-        
-        print(f"✓ All required input files found for {self.province_name}")
-    
+            
     def get_output_path(self, data_type, filename, dir = False):
         """Generate output file paths with automatic directory creation."""
         output_dirs = {

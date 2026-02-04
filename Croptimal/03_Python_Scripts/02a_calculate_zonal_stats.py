@@ -1,20 +1,17 @@
-import glob
 import os
 from pathlib import Path
+from typing import Optional, Dict, List
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
 import rasterio
 import rasterio.mask
-import fiona
-import geopandas as gpd
-import pandas as pd
-import numpy as np
-from shapely.geometry import shape
 
-
-# Import the centralized configuration
 from config import CroptimalConfig
 
-# Setup functions
-def load_communes(config, shapefile_path, province_name):
+
+def load_communes(config: CroptimalConfig, shapefile_path: str, province_name: str) -> gpd.GeoDataFrame:
     """Load and filter communes by province name."""
     gdf = gpd.read_file(shapefile_path)
     communes_gdf = gdf[gdf['ADM1_EN'] == province_name]
@@ -22,119 +19,104 @@ def load_communes(config, shapefile_path, province_name):
     if communes_gdf.empty:
         raise ValueError(f"No communes found for province: {province_name}")
     
-    # Reproject
-    communes_gdf = communes_gdf.to_crs(config.local_projection)
-    return communes_gdf
+    return communes_gdf.to_crs(config.local_projection)
 
-def get_variable_name(raster_path):
+
+def get_variable_name(raster_path: str) -> str:
     """Extract variable name from raster filename."""
-    # Get the filename without extension
-    filename = Path(raster_path).stem
+    return Path(raster_path).stem.rsplit('_', 1)[0]
 
-    # Remove the province name
-    filename = filename.rsplit('_',1)[0]
 
-    return filename
+def _calculate_commune_mean(src, geom, nodata_value: float) -> float:
+    """Calculate mean value for a geometry, excluding nodata."""
+    try:
+        out_image, _ = rasterio.mask.mask(src, [geom], crop=True, nodata=nodata_value)
+        valid_pixels = out_image[out_image != nodata_value]
+        return round(np.mean(valid_pixels), 2) if len(valid_pixels) > 0 else np.nan
+    except Exception as e:
+        return np.nan
 
-def calculate_zonal_stats(config, communes_gdf, max_communes=None, max_rasters=None):
+
+def calculate_zonal_stats(
+    config: CroptimalConfig,
+    communes_gdf: gpd.GeoDataFrame,
+    max_communes: Optional[int] = None,
+    max_rasters: Optional[int] = None
+) -> pd.DataFrame:
     """Calculate zonal statistics for raster files within commune boundaries."""
-    # Load data from config
-    nodata_value = config.no_data_value
-    province_results_dir = config.province_results_dir
-
-    # Find all raster files
-    raster_files = list(Path(province_results_dir).rglob('*.tif'))
+    province_results_dir = Path(config.province_results_dir)
+    raster_files = sorted(province_results_dir.rglob('*.tif'))
+    
     if not raster_files:
         raise ValueError(f"No raster files found in {province_results_dir}")
     
-    # Limit for testing if specified
-    if max_communes:
-        communes_gdf = communes_gdf.iloc[:max_communes]
-    if max_rasters:
-        raster_files = raster_files[:max_rasters]
-
-    commune_names = communes_gdf['ADM3_PCODE'].tolist()
-    commune_geoms = communes_gdf.geometry.tolist()
+    communes_gdf = communes_gdf.iloc[:max_communes] if max_communes else communes_gdf
+    raster_files = raster_files[:max_rasters] if max_rasters else raster_files
     
-    # Initialize results
-    results = {'Commune': commune_names}
+    commune_ids = communes_gdf['ADM3_PCODE'].tolist()
+    geoms = communes_gdf.geometry.tolist()
     
-    # Process each raster file
-    i = 1
-    for raster_path in raster_files:
-        variable_name = get_variable_name(str(raster_path))
-        # Progress update
-        print(f'Processing {variable_name}. Raster {i}/{len(raster_files)}')
-        i += 1
-
-        # Open raster files
+    results = {'Commune_ID': commune_ids}
+    
+    for idx, raster_path in enumerate(raster_files, 1):
+        var_name = get_variable_name(str(raster_path))
+        print(f'Processing {var_name}. Raster {idx}/{len(raster_files)}')
+        
         with rasterio.open(raster_path) as src:
-            commune_means = []
-            for idx, geom in enumerate(commune_geoms):
-                try:
-                    # Mask and calculate mean
-                    out_image, _ = rasterio.mask.mask(src, [geom], crop=True, nodata=nodata_value)
-                    valid_pixels = out_image[out_image != nodata_value]
-                    
-                    mean_val = round(np.mean(valid_pixels), 2) if len(valid_pixels) > 0 else np.nan
-                    commune_means.append(mean_val)
-                    
-                except Exception as e:
-                    print(f"  - Warning: Could not process commune {commune_names[idx]} for raster {variable_name}.")
-                    print(f"  - Error details: {e}")
-                    commune_means.append(np.nan)
-            
-            results[variable_name] = commune_means
+            results[var_name] = [
+                _calculate_commune_mean(src, geom, config.no_data_value)
+                for geom in geoms
+            ]
     
-    # Convert results to DataFrame and join with gdf
     results_df = pd.DataFrame(results).round(2)
-    communes_gdf_with_zonal_stats = communes_gdf.merge(results_df, left_on="ADM3_PCODE", right_on="Commune")
-
-    # Save gdf with new variables (for inspection if needed)
+    communes_with_stats = communes_gdf.merge(results_df, left_on="ADM3_PCODE", right_on="Commune_ID")
+    
+    # Save geopackage
     output_dir = config.get_output_path('zonal_stats_communes', '', dir=True)
-    output_geopackage = output_dir / (f'communes_with_zonal_stats_{config.province_name}.gpkg')
-    communes_gdf_with_zonal_stats.to_file(output_geopackage, driver='GPKG')
+    output_gpkg = output_dir / f'communes_with_zonal_stats_{config.province_name}.gpkg'
+    communes_with_stats.to_file(output_gpkg, driver='GPKG')
+    
+    # Report missing values
+    missing_values_mask = results_df.isna().sum()
+    missing_values = missing_values_mask[missing_values_mask > 0]
+    
+    if not missing_values.empty:
+        total_missing = missing_values.sum()
+        total_cells = len(results_df) * (len(results_df.columns) - 1)
+        
+        print("\nMissing values per variable:")
+        print(missing_values)
+        print(f"Total missing values: {total_missing}")
+        print("\nPercentage of missing values:")
+        print((missing_values / len(results_df) * 100).round(1))
+        print(f"Total percentage: {(total_missing / total_cells * 100).round(1)}%")
 
-    # Print number of cells with no data
-    print("\nNumber of missing values per variable:")
-    print(results_df.isna().sum())
-    print("Total number of missing values:", results_df.isna().sum().sum())
-    print("\nPercentage of missing values:")
-    print((results_df.isna().sum() / len(results_df) * 100).round(1))
-    print("Total percentage of missing values:", (results_df.isna().sum().sum() / (len(results_df) * (len(results_df.columns)-1)) * 100).round(1))
-
+        # Save missing values report
+        missing_values_df = missing_values.reset_index(headers=['Variable', 'Missing_Values'])
+        missing_values_df["Percentage_Missing"] = (missing_values_df["Missing_Values"] / len(results_df) * 100).round(1)
+        missing_values_df.to_csv(output_dir / f'missing_values_report_{config.province_name}.csv', index=False)
+    
     return results_df
 
+
 def main():
-    # Initialize configuration
     config = CroptimalConfig()
     config.validate_inputs()
     
     print(f"Province: {config.province_name}")
     
-    # Reproject communes shapefile
-    communes_filepath = config.communes_shapefile
-    communes_gdf = load_communes(config, communes_filepath, config.province_name)
+    # Load communes
+    communes_gdf = load_communes(config, config.communes_shapefile, config.province_name)
     
-    # Calculate zonal statistics (limit to 3 communes for testing)
-    zonal_stats_df = calculate_zonal_stats(config, 
-                                            communes_gdf, 
-                                            max_communes=None,
-                                            max_rasters= None)
+    # Calculate zonal statistics
+    zonal_stats_df = calculate_zonal_stats(config, communes_gdf)
     
-    # Save final results to csv
+    # Save to CSV
     output_dir = config.get_output_path('zonal_stats_communes', '', dir=True)
     output_csv = output_dir / 'zonal_stats_per_commune.csv'
-    zonal_stats_df.to_csv(output_csv)
+    zonal_stats_df.to_csv(output_csv, index=False)
     print(f"Processed {len(zonal_stats_df)} communes")
 
-# Main execution
+
 if __name__ == "__main__":
-    # try:
     main()
-    # except FileNotFoundError as e:
-    #     print(f"Error: Missing required file - {e}")
-    #     exit(1)
-    # except Exception as e:
-    #     print(f"Error processing parameter limits: {e}")
-    #     exit(1)

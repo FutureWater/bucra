@@ -11,12 +11,13 @@
             "program": "${workspaceFolder}/SOSIA/sosia_202502.py"
         },
         {
-            "name": "Python: Current File",
+            "name": "Python: Current File (uv)",
             "type": "python",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "cwd": "${fileDirname}"
+            "cwd": "${fileDirname}",
+            "python": "${command:python.interpreterPath}"
         }
     ]
 }

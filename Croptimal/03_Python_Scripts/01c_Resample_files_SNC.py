@@ -36,7 +36,7 @@ def main():
     # Validate inputs
     config.validate_inputs()
     
-    print(f"Processing SNC files: {config.province_name}")
+    print(f"Processing SNC files for {config.province_name}")
     
     # Set up paths
     snc_input_dir = config.data_dir / "Soil_Nutrient_Content"
@@ -56,10 +56,10 @@ def main():
     # Process each SNC file
     for input_file in input_files:
         # Generate output filename
-        output_name = input_file.name.replace("0to20cm", config.province_name)
-        output_name = f"Extractable_{output_name}"
+        var_name = input_file.name.replace("0to20cm", config.province_name)
+        output_name = f"Extractable_{var_name}"
         output_path = snc_output_dir / output_name
-        
+        print(f"    Processing {var_name.split('_')[0]}")
         # Process the file
         with rasterio.open(input_file) as src:
             # Crop to province extent first to reduce processing
@@ -105,7 +105,7 @@ def main():
             with rasterio.open(output_path, 'w', **output_profile) as dst:
                 dst.write(destination_array.astype(rasterio.float32), 1)
     
-    print(f"SNC processing complete for {config.province_name}!\n")
+    print(f"SNC processing complete for {config.province_name}!")
 
 
 if __name__ == "__main__":

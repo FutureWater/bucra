@@ -24,7 +24,7 @@ def get_processing_scripts(scripts_dir):
     script_files = glob.glob(str(scripts_dir / "*.py"))
     
     # Exclude orchestration and seasonal forecast scripts
-    excluded_patterns = ["000_Run_All.py", "04_Seasonal"]
+    excluded_patterns = ["000_Run_All.py", "config.py", "croptimal_utils.py"]
     processing_scripts = [
         script for script in script_files 
         if not any(pattern in script for pattern in excluded_patterns)
@@ -69,11 +69,12 @@ def run_script_for_province(script_path, country_name, province_name, config):
     try:
         # Run script with real-time output
         process = subprocess.Popen(
-            ["python", script_path],
+            ["uv", "run", script_path],
             env=script_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            cwd=str(config.scripts_dir)  # Run from scripts directory
         )
         
         # Print output in real-time

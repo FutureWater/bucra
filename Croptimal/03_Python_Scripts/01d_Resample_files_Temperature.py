@@ -4,7 +4,6 @@ Temperature Processing Script
 Processes temperature data by resampling to DEM resolution and applying lapse rate correction.
 """
 
-import glob
 import calendar
 import rasterio
 import numpy as np
@@ -14,31 +13,27 @@ from rasterio.warp import reproject, Resampling
 # Import the configuration class
 from config import CroptimalConfig
 from croptimal_utils import load_reference_dem
-from IPython import embed
-
-#def main():
-"""Main processing function."""
-print(f"Processing Temperature data: {' ' * 17}")
-
-# Initialize configuration
-config = CroptimalConfig()
-config.validate_inputs()
-    
-# Temperature lapse rate (-0.0065 °C/m)
-lapse_rate = config.lapse_rate
-
-# Find temperature input files
-input_files = [config.data_dir / "Temperature" / "Tmax.tif", config.data_dir / "Temperature" / "Tmin.tif"]
-if not input_files:
-    raise FileNotFoundError(f"No temperature files found in {config.data_dir / 'Temperature'}")
-
-# Extract variable names from filenames
-temp_vars = [Path(file).stem for file in input_files] 
-
-# Load reference DEM using the dedicated function
-reference_dem = load_reference_dem(config)
 
 def main():
+    """Main processing function."""
+    # Initialize configuration
+    config = CroptimalConfig()
+    config.validate_inputs()
+    print(f"Processing Temperature data for {config.province_name}")
+    
+    # Temperature lapse rate (-0.0065 °C/m)
+    lapse_rate = config.lapse_rate
+
+    # Find temperature input files
+    input_files = [config.data_dir / "Temperature" / "Tmax.tif", config.data_dir / "Temperature" / "Tmin.tif"]
+    if not input_files:
+        raise FileNotFoundError(f"No temperature files found in {config.data_dir / 'Temperature'}")
+
+    # Extract variable names from filenames
+    temp_vars = [Path(file).stem for file in input_files] 
+
+    # Load reference DEM using the dedicated function
+    reference_dem = load_reference_dem(config)
     # Process each temperature variable
     for file_name, var in zip(input_files, temp_vars):
         #process_temperature_variable(file_name, var, reference_dem, config, lapse_rate)

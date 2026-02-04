@@ -50,12 +50,11 @@ def apply_unit_conversion(data, var_name, no_data_value):
 
 def main():
     """Main processing function."""
-    print(f"Processing Soil Hydraulic Properties: {' ' * 5}")
-    
     # Initialize configuration
     config = CroptimalConfig()
     config.validate_inputs()
-        
+    print(f"Processing Soil Hydraulic Properties for {config.province_name}.")    
+    
     # Load reference DEM
     reference_dem = load_reference_dem(config)
     
@@ -78,7 +77,7 @@ def main():
     # Process each variable
     output_paths = []
     for var_name in var_names:
-        print(f"    Processing {var_name} data...")
+        print(f"    Processing {var_name} data")
         
         # Get files for this variable
         var_files = [file for file in input_files if var_name in file]

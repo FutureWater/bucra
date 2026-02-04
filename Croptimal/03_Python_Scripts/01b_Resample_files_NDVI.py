@@ -16,14 +16,11 @@ from croptimal_utils import load_reference_dem
 
 def main():
     """Main processing function."""
-    print(f"Processing NDVI data: {' ' * 25}")
-    
     # Initialize configuration
     config = CroptimalConfig()
     config.validate_inputs()
-    
-    print(f"Province: {config.province_name}")
-    
+    print(f"Processing NDVI data for {config.province_name}: {' ' * 25}")
+
     # Set up paths
     ndvi_input_path = config.data_dir / "NDVI" / "NDVI_mean_monthly_stack.tif"
     ndvi_output_dir = config.get_output_path('ndvi', 'Mean_Monthly', dir=True)
@@ -85,7 +82,7 @@ def main():
             with rasterio.open(output_path, 'w', **output_profile) as dst:
                 dst.write(resampled_data.astype(rasterio.float32), 1)
     
-    print(f"NDVI processing complete for {config.province_name}!\n")
+    print(f"NDVI processing complete for {config.province_name}!")
 
 
 if __name__ == "__main__":
